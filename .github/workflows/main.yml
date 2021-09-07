@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+
+env:
+  RESOURCE_DIR: functions
+
+jobs:
+  build:
+    name: Build Firebase Functions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        
+      - name: Install Dependencies
+        run: npm ci --no-audit
+        working-directory: ${{ env.RESOURCE_DIR }}
+        
+      - name: Build
+        run: npm run build
+        working-directory: ${{ env.RESOURCE_DIR }}
+        
+      - name: Archive Production Artifact
+        uses: actions/upload-artifact@master
+        with:
+          name: lib
+          path: ${{ env.RESOURCE_DIR }}/lib
+
+  deploy:
+    name: Deploy Firebase Functions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v2
+        
+      - name: Install Dependencies
+        run: npm ci --no-audit
+        working-directory: ${{ env.RESOURCE_DIR }}
+        
+      - name: Download Artifact
+        uses: actions/download-artifact@master
+        with:
+          name: lib
+          path: ${{ env.RESOURCE_DIR }}/lib
+          
+      - name: Deploy to Firebase
+        uses: w9jds/firebase-action@master
+        with:
+          args: deploy --only functions --force
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          API_KEY: ${{ secrets.API_KEY }}
