@@ -14,7 +14,7 @@ exports.previewFunction = functions.https.onRequest((request, response) => {
   if (sheetID) {    
     const req = {
       spreadsheetId: sheetID,
-      key: process.env.api_key,
+      key: process.env.API_KEY,
       range: sheetName,      
       majorDimension: 'ROWS'
     }
