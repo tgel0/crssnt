@@ -26,8 +26,8 @@ jobs:
       - name: Archive Production Artifact
         uses: actions/upload-artifact@master
         with:
-          name: lib
-          path: ${{ env.RESOURCE_DIR }}/lib
+          name: ${{ env.RESOURCE_DIR }}
+          path: ${{ env.RESOURCE_DIR }}
 
   deploy:
     name: Deploy Firebase Functions
@@ -44,8 +44,8 @@ jobs:
       - name: Download Artifact
         uses: actions/download-artifact@master
         with:
-          name: lib
-          path: ${{ env.RESOURCE_DIR }}/lib
+          name: ${{ env.RESOURCE_DIR }}
+          path: ${{ env.RESOURCE_DIR }}
           
       - name: Deploy to Firebase
         uses: w9jds/firebase-action@master
