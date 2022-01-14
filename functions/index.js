@@ -2,7 +2,7 @@ const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 const {google} = require('googleapis');
 const sheets = google.sheets('v4');
-const api_key =   functions.config().sheets.api_key
+const api_key = functions.config().sheets.api_key
 
 admin.initializeApp();
 
@@ -13,7 +13,6 @@ exports.previewFunction = functions.https.onRequest(async (request, response) =>
   const sheetIDfromURL = request.path.split("/")[6]
   const sheetID = request.query.id ? request.query.id : sheetIDfromURL  
   const sheetName = request.query.name ? request.query.name : 'Sheet1'
-  const mode = request.query.mode ? request.query.mode : ''
 
   if (sheetID) {
       const reqTitle = {
@@ -29,7 +28,7 @@ exports.previewFunction = functions.https.onRequest(async (request, response) =>
       try {
         const sheetTitle = (await sheets.spreadsheets.get(reqTitle)).data.properties.title;
         const sheetvalues = (await sheets.spreadsheets.values.get(reqValues)).data.values;
-        const xmlItems = generateSingleItem(sheetvalues, mode);
+        const xmlItems = generateSingleItem(sheetvalues);
         const xml = `<?xml version="1.0" encoding="UTF-8"?>
                       <rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
                       <channel>
@@ -53,27 +52,23 @@ exports.previewFunction = functions.https.onRequest(async (request, response) =>
   }
 });
 
-function generateSingleItem(values, mode) {
+function generateSingleItem(values) {
   let xmlItemsAll = []
   for (const key in values) {
     let value = values[key]
     if(value.length > 0) {      
+      let title = value.shift();
       let url = value.find(s => s.startsWith('http'));
-      let date = value.find(s => Date.parse(s));
+      let date = value.find(s => new Date(Date.parse(s)).toUTCString().slice(0,25) == s.slice(0,25))
       if(url){
         value.splice(value.indexOf(url), 1); 
       }      
       if(date){
         value.splice(value.indexOf(date), 1); 
       }
-      if(mode == 'title'){
-        valueMode = value.join(' ');
-      } else if (mode == 'B') {
-        valueMode = value.slice(0);
-      }
-      let xmlItem = `<item>
-        ${mode ? '<title><![CDATA['+valueMode+']]></title>' : '<title><![CDATA['+value[0]+']]></title>'}
-        ${mode ? '<description></description>' : '<description><![CDATA['+value.slice(1)+']]></description>'}
+      let xmlItem = `<item>        
+        ${'<title><![CDATA['+title+']]></title>'}
+        ${'<description><![CDATA['+value.slice(0)+']]></description>'}
         ${url !== undefined ? '<link>'+url+'</link>' : ''}
         ${url !== undefined ? '<guid>'+url+'</guid>' : ''}
         <pubDate>${date !== undefined ? new Date(date).toUTCString() : new Date().toUTCString()}</pubDate>
