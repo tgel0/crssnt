@@ -50,6 +50,6 @@ jobs:
       - name: Deploy to Firebase
         uses: w9jds/firebase-action@master
         with:
-          args: functions:config:set sheets.api_key=${{ secrets.API_KEY }} ; firebase deploy --only functions --force
+          args: functions:config:set sheets.api_key=${{ secrets.API_KEY }} sheets.measurement_id=${{ secrets.MEASURE_ID }} sheets.api_secret=${{ secrets.API_SECRET }} sheets.client_id=${{ secrets.CLIENT_ID }}; firebase deploy --only functions --force
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}

@@ -4,7 +4,7 @@
   </a>
 </p>
 
-### 🆕 New from February 1st 2021: Sheet ID logging
+### 🆕 New from February 1st 2022: Sheet ID logging
 
 In order to better understand the usage of the crssnt sheet-2-RSS service the Sheet IDs will be logged starting from February 1st 2022. No other data has been or will be collected by crssnt. There will also be an option to disable the logging of the Sheet IDs by adding `&logging=false` to the end of the crssnt feed URL.
 
