@@ -4,12 +4,6 @@
   </a>
 </p>
 
-### 🆕 New from February 1st 2022: Sheet ID logging
-
-In order to better understand the usage of the crssnt sheet-2-RSS service the Sheet IDs will be logged starting from February 1st 2022. No other data has been or will be collected by crssnt. There will also be an option to disable the logging of the Sheet IDs by adding `&logging=false` to the end of the crssnt feed URL.
-
----
-
 Crssnt is an open-source RSS feed generator for Google Sheets. With crssnt, you can create your own <b>c</b>ustom <b>RSS</b> feed from any data source which can get displayed in a (public) Google Sheet:
 - existing RSS feeds
 - websites and APIs
@@ -26,7 +20,11 @@ https://crssnt.com/preview/https://docs.google.com/spreadsheets/d/1wgHZMH8-kQsC0
 There is more details in this [blog post](https://www.notion.so/tgel0/Start-here-crssnt-101-how-to-get-started-043e0a6913a84fea8165e4fe83659258).
 
 ---
+## Data Privacy
 
+No personal data is being stored while using the crssnt feed generator. Some general usage data such as date and time of the request as well as the underlying Google Sheet ID are stored for analytics purposes. You can disable the Sheet ID logging by adding `&logging=false` to the end of the crssnt feed URL.
+
+Read more [here](https://crssnt.com/legal).
 
 ## For Devs
 
