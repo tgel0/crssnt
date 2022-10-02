@@ -8,7 +8,6 @@ const measurement_id = functions.config().sheets.measurement_id
 const api_secret = functions.config().sheets.api_secret
 const client_id = functions.config().sheets.client_id
 
-
 admin.initializeApp();
 
 // this is the main function
@@ -17,7 +16,7 @@ exports.previewFunction = functions.https.onRequest(async (request, response) =>
   
   const sheetIDfromURL = request.path.split("/")[6]
   const sheetID = request.query.id ? request.query.id : sheetIDfromURL  
-  const sheetName = request.query.name ? request.query.name : 'Sheet1'
+  let sheetName = request.query.name ? request.query.name : undefined
   const tracking = request.query.tracking ? request.query.tracking : ''
   const mode = request.query.mode ? request.query.mode : ''
 
@@ -47,16 +46,29 @@ exports.previewFunction = functions.https.onRequest(async (request, response) =>
       key: api_key
     }
 
-    const reqValues = {
-      spreadsheetId: sheetID,      
-      key: api_key,
-      range: sheetName,      
-      majorDimension: 'ROWS'
-    }
+    try {     
+      const sheetData = (await sheets.spreadsheets.get(reqTitle)).data;
+      const sheetTitle = sheetData.properties.title;      
+      const sheetZeroProps = sheetData.sheets.filter(obj => {
+        return obj.properties.sheetId == 0
+      })
 
-    try {
-      const sheetTitle = (await sheets.spreadsheets.get(reqTitle)).data.properties.title;
+      if(sheetZeroProps.length > 0 && sheetName === undefined){
+        sheetName = sheetZeroProps[0].properties.title
+      }
+      else{
+        sheetName = 'Sheet1'
+      }
+
+      const reqValues = {
+        spreadsheetId: sheetID,      
+        key: api_key,
+        range: sheetName,      
+        majorDimension: 'ROWS'
+      }
+
       const sheetvalues = (await sheets.spreadsheets.values.get(reqValues)).data.values;
+      
       if(mode == 'manual'){
         var xmlItems = generateSingleItemManualMode(sheetvalues);
         var feedDescription = 'This feed is generated from a Google Sheet using the crssnt feed generator in manual mode. This feature is still being developed and may show unexpected results from time to time.';
@@ -64,6 +76,7 @@ exports.previewFunction = functions.https.onRequest(async (request, response) =>
             var xmlItems = generateSingleItem(sheetvalues);
             var feedDescription = 'This feed is generated from a Google Sheet using the crssnt feed generator (auto mode).';
       }
+
       const xml = `<?xml version="1.0" encoding="UTF-8"?>
                     <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
                     <channel>

@@ -11,7 +11,7 @@ Crssnt is an open-source RSS feed generator for Google Sheets. With crssnt, you 
 - data from Sheets add-ons
 - etc.
 
-The easiest way to generate an RSS feed with crssnt is to add `https://crssnt.com/preview/` to the the beginning of your public Google Sheet URL, like this:
+The easiest way to generate an RSS feed with crssnt is to add `https://crssnt.com/preview/` to the beginning of your public Google Sheet URL, like this:
 
 
 ```
