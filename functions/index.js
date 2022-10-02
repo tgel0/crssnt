@@ -53,11 +53,13 @@ exports.previewFunction = functions.https.onRequest(async (request, response) =>
         return obj.properties.sheetId == 0
       })
 
-      if(sheetZeroProps.length > 0 && sheetName === undefined){
-        sheetName = sheetZeroProps[0].properties.title
-      }
-      else{
-        sheetName = 'Sheet1'
+      if(sheetName === undefined){
+        if(sheetZeroProps.length > 0){
+          sheetName = sheetZeroProps[0].properties.title
+        }
+        else{
+          sheetName = 'Sheet1' //last attempt to get the name if not provided by user and deleted
+        }
       }
 
       const reqValues = {
@@ -68,7 +70,7 @@ exports.previewFunction = functions.https.onRequest(async (request, response) =>
       }
 
       const sheetvalues = (await sheets.spreadsheets.values.get(reqValues)).data.values;
-      
+
       if(mode == 'manual'){
         var xmlItems = generateSingleItemManualMode(sheetvalues);
         var feedDescription = 'This feed is generated from a Google Sheet using the crssnt feed generator in manual mode. This feature is still being developed and may show unexpected results from time to time.';
