@@ -10,9 +10,9 @@ const client_id = functions.config().sheets.client_id
 
 admin.initializeApp();
 
-// this is the main function
-// TODO get sheet title + data from the same API call
 exports.previewFunction = functions.https.onRequest(async (request, response) => {
+  // this is the main function
+  // TODO get sheet title + data from the same API call
   
   const sheetIDfromURL = request.path.split("/")[6]
   const sheetID = request.query.id ? request.query.id : sheetIDfromURL  
@@ -23,22 +23,7 @@ exports.previewFunction = functions.https.onRequest(async (request, response) =>
   if (sheetID) {
 
     if (tracking != 'false'){
-      let status; 
-      fetch(`https://www.google-analytics.com/mp/collect?measurement_id=${measurement_id}&api_secret=${api_secret}`, {
-            method: "POST",
-            body: JSON.stringify({
-              client_id: client_id,
-              events: [{
-                name: 'preview_function',
-                params: {
-                  "sheet_ID": sheetID
-                },
-              }]
-            })
-          })
-        .then((res) => { 
-          status = res.status; 
-        })
+      trackSheetID(sheetID)
     }
 
     const reqTitle = {
@@ -46,9 +31,10 @@ exports.previewFunction = functions.https.onRequest(async (request, response) =>
       key: api_key
     }
 
-    try {     
+    try {       
+
       const sheetData = (await sheets.spreadsheets.get(reqTitle)).data;
-      const sheetTitle = sheetData.properties.title;      
+      const sheetTitle = sheetData.properties.title;            
       const sheetZeroProps = sheetData.sheets.filter(obj => {
         return obj.properties.sheetId == 0
       })
@@ -72,10 +58,10 @@ exports.previewFunction = functions.https.onRequest(async (request, response) =>
       const sheetvalues = (await sheets.spreadsheets.values.get(reqValues)).data.values;
 
       if(mode == 'manual'){
-        var xmlItems = generateSingleItemManualMode(sheetvalues);
+        var xmlItems = generateFeedManualMode(sheetvalues);
         var feedDescription = 'This feed is generated from a Google Sheet using the crssnt feed generator in manual mode. This feature is still being developed and may show unexpected results from time to time.';
       } else {
-            var xmlItems = generateSingleItem(sheetvalues);
+            var xmlItems = generateFeedAutoMode(sheetvalues);
             var feedDescription = 'This feed is generated from a Google Sheet using the crssnt feed generator (auto mode).';
       }
 
@@ -92,17 +78,17 @@ exports.previewFunction = functions.https.onRequest(async (request, response) =>
                     </rss>`;
 
         return response.status(200).contentType('text/xml; charset=utf8').send(xml);      
-      } catch (err) {
-        console.error(err);
-        return response.status(400).send('Something went wrong, check the parameters and try again.');
-      }
+    } catch (err) {
+      console.error(err);
+      return response.status(400).send('Something went wrong, check the parameters and try again.');
     }
+  }
   else {
-    return response.status(400).send('Something went wrong, check the parameters and try again.');
+    return response.status(400).send('Sheet ID not provided, check the parameters and try again.');
   }
 });
 
-function generateSingleItem(values) {
+function generateFeedAutoMode(values) {
   let xmlItemsAll = []
   for (const key in values) {
     let value = values[key]
@@ -119,8 +105,8 @@ function generateSingleItem(values) {
       let xmlItem = `<item>        
         ${'<title><![CDATA['+title+']]></title>'}
         ${'<description><![CDATA['+value.slice(0)+']]></description>'}
-        ${url !== undefined ? '<link>'+url+'</link>' : ''}
-        ${url !== undefined ? '<guid>'+url+'</guid>' : ''}
+        ${url !== undefined ? '<link><![CDATA['+url+']]></link>' : ''}
+        ${url !== undefined ? '<guid><![CDATA['+url+']]></guid>' : ''}
         <pubDate>${date !== undefined ? new Date(date).toUTCString() : new Date().toUTCString()}</pubDate>
         </item>`
         xmlItemsAll = xmlItemsAll + xmlItem
@@ -129,7 +115,7 @@ function generateSingleItem(values) {
   return xmlItemsAll
 }
 
-function generateSingleItemManualMode(values) {
+function generateFeedManualMode(values) {
   let xmlItemsAll = []
   for (const key in values) {
     if(key != 0){ //skip header row
@@ -149,4 +135,26 @@ function generateSingleItemManualMode(values) {
     }
   }
   return xmlItemsAll
+}
+
+function trackSheetID(sheetID) {
+  // This function tracks the Sheet ID used to generate the RSS feed
+  // Will not run if the tracking query string is set to false
+  console.log("Tracking!")
+  let status; 
+  fetch(`https://www.google-analytics.com/mp/collect?measurement_id=${measurement_id}&api_secret=${api_secret}`, {
+        method: "POST",
+        body: JSON.stringify({
+          client_id: client_id,
+          events: [{
+            name: 'preview_function',
+            params: {
+              "sheet_ID": sheetID
+            },
+          }]
+        })
+      })
+    .then((res) => { 
+      status = res.status; 
+    })
 }
