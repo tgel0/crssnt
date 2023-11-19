@@ -4,12 +4,17 @@
   </a>
 </p>
 
-Crssnt is an open-source RSS feed generator for Google Sheets. With crssnt, you can create your own <b>c</b>ustom <b>RSS</b> feed from any data source which can get displayed in a (public) Google Sheet:
+[crssnt](https://crssnt.com/) is an open-source RSS feed generator for Google Sheets. With crssnt, you can create your own <b>c</b>ustom <b>RSS</b> feed from any data source that you can get displayed in a (public) Google Sheet:
+
 - existing RSS feeds
 - websites and APIs
 - data from manual input
 - data from Sheets add-ons
 - etc.
+
+<hr />
+
+## Quickstart
 
 The easiest way to generate an RSS feed with crssnt is to add `https://crssnt.com/preview/` to the beginning of your public Google Sheet URL, like this:
 
@@ -19,7 +24,7 @@ https://crssnt.com/preview/https://docs.google.com/spreadsheets/d/1wgHZMH8-kQsC0
 ```
 There is more details in this [blog post](https://www.notion.so/tgel0/Start-here-crssnt-101-how-to-get-started-043e0a6913a84fea8165e4fe83659258).
 
----
+
 ## Data Privacy
 
 No personal data is being stored while using the crssnt feed generator. Some general usage data such as date and time of the request as well as the underlying Google Sheet ID are stored for analytics purposes. You can disable the Sheet ID logging by adding `&logging=false` to the end of the crssnt feed URL.
@@ -38,4 +43,4 @@ Once you have installed the Firebase CLI and cloned this repository, you can emu
 
 ### License
 
-Licensed under the The MIT License. Copyright 2022 Tomislav Gelo.
+Licensed under the The MIT License. Copyright 2023 Tomi Gelo.
