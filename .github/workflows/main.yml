@@ -52,4 +52,4 @@ jobs:
         with:
           args: functions:config:set sheets.api_key=${{ secrets.API_KEY }} sheets.measurement_id=${{ secrets.MEASURE_ID }} sheets.api_secret=${{ secrets.API_SECRET }} sheets.client_id=${{ secrets.CLIENT_ID }}; firebase deploy --only functions --force
         env:
-          GCP_SA_KEY: ${{ secrets.SA_TOKEN }}
+          GCP_SA_KEY: ${{ secrets.SA_KEY }}
