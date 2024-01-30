@@ -6,13 +6,27 @@
       "**/.*",
       "**/node_modules/**"
     ],
-    "rewrites": [ {
-      "source": "/preview",
-      "function": "previewFunction"    
-    },
+    "rewrites": [
+      {
+        "source": "/preview",
+        "function": "previewFunction"
+      },
+      {
+        "source": "/preview/**",
+        "function": "previewFunction"
+      }
+    ]
+  },
+  "functions": [
     {
-      "source": "/preview/**",
-      "function": "previewFunction"    
-    } ]
-  }
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log"
+      ]
+    }
+  ]
 }
