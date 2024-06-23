@@ -23,7 +23,7 @@ exports.previewFunction = functions.https.onRequest(async (request, response) =>
   if (sheetID) {
 
     if (tracking != 'false'){
-      trackSheetID(sheetID)
+      logEvent(sheetID, 'preview_function')
     }
 
     const reqTitle = {
@@ -137,10 +137,10 @@ function generateFeedManualMode(values) {
   return xmlItemsAll
 }
 
-function trackSheetID(sheetID) {
+function logEvent(sheetID, eventName) {
   // This function tracks the Sheet ID used to generate the RSS feed
   // Will not run if the tracking query string is set to false
-  console.log("Tracking!")
+  console.log("Log event received: ", eventName)
   let status; 
   fetch(`https://www.google-analytics.com/mp/collect?measurement_id=${measurement_id}&api_secret=${api_secret}`, {
         method: "POST",
