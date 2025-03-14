@@ -22,8 +22,14 @@ exports.previewFunction = functions.https.onRequest(async (request, response) =>
 
   if (sheetID) {
 
-    if (tracking != 'false'){
-      logEvent(sheetID, 'preview_function')
+    // Determine the event name based on the mode
+    let eventName = 'preview_function'; // Default event name (auto mode)
+    if (mode === 'manual') {
+      eventName = 'preview_function_manual';
+    }
+
+    if (tracking != 'false') {
+      logEvent(sheetID, eventName);
     }
 
     const reqTitle = {
