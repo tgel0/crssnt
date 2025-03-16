@@ -1,14 +1,26 @@
-const functions = require('firebase-functions');
-const admin = require('firebase-admin');
-const {google} = require('googleapis');
-const sheets = google.sheets('v4');
+const { onRequest } = require("firebase-functions/v2/https");
+const { setGlobalOptions } = require("firebase-functions/v2");
+const { initializeApp } = require("firebase-admin/app");
+const { google } = require('googleapis');
 const fetch = require('node-fetch');
-const api_key = functions.config().sheets.api_key
-const measurement_id = functions.config().sheets.measurement_id
-const api_secret = functions.config().sheets.api_secret
-const client_id = functions.config().sheets.client_id
+const functions = require('firebase-functions'); //for 1st gen
+const sheets = google.sheets('v4');
 
-admin.initializeApp();
+// Set the region for all functions
+setGlobalOptions({ region: "us-central1" });
+
+// get the config variables
+const api_key = functions.config().sheets.api_key
+const api_secret = functions.config().sheets.api_secret
+const measurement_id = functions.config().sheets.measurement_id
+const client_id = functions.config().sheets.client_id
+const api_key_2nd_gen = process.env.SHEETS_API_KEY;
+
+// Initialize Firebase Admin SDK
+initializeApp();
+
+// --------------------- 1ST GEN FUNCTION ---------------------
+const admin = require('firebase-admin');
 
 exports.previewFunction = functions.https.onRequest(async (request, response) => {
   // this is the main function
@@ -93,6 +105,86 @@ exports.previewFunction = functions.https.onRequest(async (request, response) =>
     return response.status(400).send('Sheet ID not provided, check the parameters and try again.');
   }
 });
+
+// --------------------- 2ND GEN FUNCTION ---------------------
+
+exports.previewFunctionV2 = onRequest({ cors: true, secrets: ["SHEETS_API_KEY"] }, async (request, response) => {
+  const sheetIDfromURL = request.path.split("/")[1];
+  const sheetID = request.query.id ? request.query.id : sheetIDfromURL;
+  let sheetName = request.query.name ? request.query.name : undefined;
+  const mode = request.query.mode ? request.query.mode : '';
+
+  if (sheetID) {
+
+    const reqTitle = {
+      spreadsheetId: sheetID,
+      key: api_key_2nd_gen
+    };
+
+    try {
+      const sheetData = (await sheets.spreadsheets.get(reqTitle)).data;
+      const sheetTitle = sheetData.properties.title;
+      const sheetZeroProps = sheetData.sheets.filter(obj => {
+        return obj.properties.sheetId == 0;
+      });
+
+      if (sheetName === undefined) {
+        if (sheetZeroProps.length > 0) {
+          sheetName = sheetZeroProps[0].properties.title;
+        } else {
+          sheetName = 'Sheet1';
+        }
+      }
+
+      const reqValues = {
+        spreadsheetId: sheetID,
+        key: api_key_2nd_gen,
+        range: sheetName,
+        majorDimension: 'ROWS'
+      };
+
+      const sheetvalues = (await sheets.spreadsheets.values.get(reqValues)).data.values;
+      const { xmlItems, feedDescription } = generateFeedContent(sheetvalues, mode);
+
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+                    <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+                    <channel>
+                    <title>${sheetTitle}</title>
+                    <link>https://docs.google.com/spreadsheets/d/${sheetID}</link>
+                    <description> ${feedDescription}</description>
+                    <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
+                    <generator>https://github.com/tgel0/crssnt</generator>
+                    ${xmlItems}
+                    </channel>
+                    </rss>`;
+
+      return response.status(200).contentType('text/xml; charset=utf8').send(xml);
+    } catch (err) {
+      console.error(err);
+      return response.status(400).send('Something went wrong, check the parameters and try again.');
+    }
+  } else {
+    return response.status(400).send('Sheet ID not provided, check the parameters and try again.');
+  }
+});
+
+
+// --------------------- SHARED FUNCTIONS ---------------------
+
+function generateFeedContent(values, mode) {
+  let xmlItems;
+  let feedDescription;
+
+  if (mode == 'manual') {
+    xmlItems = generateFeedManualMode(values);
+    feedDescription = 'This feed is generated from a Google Sheet using the crssnt feed generator in manual mode.';
+  } else {
+    xmlItems = generateFeedAutoMode(values);
+    feedDescription = 'This feed is generated from a Google Sheet using the crssnt feed generator (auto mode).';
+  }
+
+  return { xmlItems, feedDescription };
+}
 
 function generateFeedAutoMode(values) {
   let xmlItemsAll = []

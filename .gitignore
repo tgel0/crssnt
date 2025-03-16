@@ -67,3 +67,4 @@ node_modules/
 
 # other
 .DS_Store
+functions/.secret.local
