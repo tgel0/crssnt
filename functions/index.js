@@ -10,10 +10,10 @@ const sheets = google.sheets('v4');
 setGlobalOptions({ region: "us-central1" });
 
 // get the config variables
-const api_key = functions.config().sheets.api_key
-const api_secret = functions.config().sheets.api_secret
-const measurement_id = functions.config().sheets.measurement_id
-const client_id = functions.config().sheets.client_id
+const api_key = process.env.SHEETS_API_KEY;
+const api_secret = process.env.SHEETS_API_SECRET;
+const measurement_id = process.env.MEASUREMENT_ID;
+const client_id = process.env.CLIENT_ID;
 const api_key_2nd_gen = process.env.SHEETS_API_KEY;
 
 // Initialize Firebase Admin SDK
