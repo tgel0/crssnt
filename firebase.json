@@ -9,11 +9,11 @@
     "rewrites": [
       {
         "source": "/preview",
-        "function": "previewFunction"
+        "function": "previewFunctionV2"
       },
       {
         "source": "/preview/**",
-        "function": "previewFunction"
+        "function": "previewFunctionV2"
       },
       {
         "source": "/preview-v2/**",
