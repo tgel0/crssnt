@@ -8,8 +8,8 @@ env:
   RESOURCE_DIR: functions
 
 jobs:
-  build:
-    name: Build Firebase Functions
+  test:
+    name: Test Firebase Functions
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -19,14 +19,43 @@ jobs:
         run: npm ci --no-audit
         working-directory: ${{ env.RESOURCE_DIR }}
         
+      - name: Run Tests
+        run: npm test
+        working-directory: ${{ env.RESOURCE_DIR }}
+        
+      - name: Archive Test Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RESOURCE_DIR }}-test
+          path: ${{ env.RESOURCE_DIR }}
+
+
+  build:
+    name: Build Firebase Functions
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Test Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.RESOURCE_DIR }}-test
+          path: ${{ env.RESOURCE_DIR }}
+        
+      - name: Install Dependencies
+        run: npm ci --no-audit
+        working-directory: ${{ env.RESOURCE_DIR }}
+        
       - name: Build
         run: npm run build
         working-directory: ${{ env.RESOURCE_DIR }}
         
-      - name: Archive Production Artifact
+      - name: Archive Build Artifact
         uses: actions/upload-artifact@master
         with:
-          name: ${{ env.RESOURCE_DIR }}
+          name: ${{ env.RESOURCE_DIR }}-build
           path: ${{ env.RESOURCE_DIR }}
 
   deploy:
@@ -36,20 +65,18 @@ jobs:
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
+
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.RESOURCE_DIR }}-build
+          path: ${{ env.RESOURCE_DIR }}
         
       - name: Install Dependencies
         run: npm ci --no-audit
         working-directory: ${{ env.RESOURCE_DIR }}
-        
-      - name: Download Artifact
-        uses: actions/download-artifact@master
-        with:
-          name: ${{ env.RESOURCE_DIR }}
-          path: ${{ env.RESOURCE_DIR }}
           
       - name: Deploy to Firebase
         uses: w9jds/firebase-action@master
         with:
-          args: functions:config:set sheets.api_key=${{ secrets.API_KEY }} sheets.measurement_id=${{ secrets.MEASURE_ID }} sheets.api_secret=${{ secrets.API_SECRET }} sheets.client_id=${{ secrets.CLIENT_ID }}; firebase deploy --only functions --force
-        env:
-          GCP_SA_KEY: ${{ secrets.SA_KEY }}
+          args: deploy --only functions

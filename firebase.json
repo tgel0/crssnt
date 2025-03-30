@@ -32,5 +32,8 @@
         "firebase-debug.*.log"
       ]
     }
-  ]
+  ],
+  "scripts": {
+    "test": "jest"
+  }
 }

@@ -73,6 +73,11 @@ exports.previewFunctionV2 = onRequest({ cors: true, secrets: ["SHEETS_API_KEY"] 
   }
 });
 
+// Export the functions for testing
+exports.generateFeedContent = generateFeedContent;
+exports.generateFeedAutoMode = generateFeedAutoMode;
+exports.generateFeedManualMode = generateFeedManualMode;
+
 function generateFeedContent(values, mode) {
   let xmlItems;
   let feedDescription;
@@ -89,7 +94,10 @@ function generateFeedContent(values, mode) {
 }
 
 function generateFeedAutoMode(values) {
-  let xmlItemsAll = []
+  let xmlItemsAll = "" // Initialize as an empty string
+  if (values.length === 0) {
+    return ""; // Return empty string for empty input
+  }
   for (const key in values) {
     let value = values[key]
     if(value.length > 0) {      
