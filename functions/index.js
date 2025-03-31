@@ -54,7 +54,8 @@ exports.previewFunctionV2 = onRequest(
       };
 
       const sheetvalues = (await sheets.spreadsheets.values.get(reqValues)).data.values;
-      const { xmlItems, feedDescription } = generateFeedContent(sheetvalues, mode);
+      const limitedSheetValues = sheetvalues.slice(0, 2000);
+      const { xmlItems, feedDescription } = generateFeedContent(limitedSheetValues, mode);
 
       const xml = `<?xml version="1.0" encoding="UTF-8"?>
                     <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
