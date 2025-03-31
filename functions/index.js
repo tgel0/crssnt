@@ -13,7 +13,12 @@ const api_key_2nd_gen = process.env.SHEETS_API_KEY;
 // Initialize Firebase Admin SDK
 initializeApp();
 
-exports.previewFunctionV2 = onRequest({ cors: true, secrets: ["SHEETS_API_KEY"] }, async (request, response) => {
+exports.previewFunctionV2 = onRequest(
+  { cors: true, 
+    secrets: ["SHEETS_API_KEY"],
+    cpu: 0.2
+  }, 
+  async (request, response) => {
   const sheetIDfromURL = request.path.split("/")[6];
   const sheetID = request.query.id ? request.query.id : sheetIDfromURL;
   let sheetName = request.query.name ? request.query.name : undefined;
