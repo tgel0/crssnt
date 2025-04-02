@@ -4,13 +4,8 @@ const { initializeApp } = require("firebase-admin/app");
 const { google } = require('googleapis');
 const sheets = google.sheets('v4');
 
-// Set the region for all functions
 setGlobalOptions({ region: "us-central1" });
-
-// get the config variables
 const api_key_2nd_gen = process.env.SHEETS_API_KEY;
-
-// Initialize Firebase Admin SDK
 initializeApp();
 
 exports.previewFunctionV2 = onRequest(
@@ -19,114 +14,147 @@ exports.previewFunctionV2 = onRequest(
     cpu: 0.2
   }, 
   async (request, response) => {
-  const sheetIDfromURL = request.path.split("/")[6];
-  const sheetID = request.query.id ? request.query.id : sheetIDfromURL;
-  let sheetName = request.query.name ? request.query.name : undefined;
-  const mode = request.query.mode ? request.query.mode : '';
 
-  if (sheetID) {
+  const pathParts = request.path.split("/");
+  const sheetIDfromURL = pathParts.length > 6 ? pathParts[6] : undefined;
+  const sheetID = request.query.id || sheetIDfromURL;
+  let sheetName = request.query.name;
+  const mode = request.query.mode || 'auto';
 
-    const reqTitle = {
-      spreadsheetId: sheetID,
-      key: api_key_2nd_gen
-    };
-
-    try {
-      const sheetData = (await sheets.spreadsheets.get(reqTitle)).data;
-      const sheetTitle = sheetData.properties.title;
-      const sheetZeroProps = sheetData.sheets.filter(obj => {
-        return obj.properties.sheetId == 0;
-      });
-
-      if (sheetName === undefined) {
-        if (sheetZeroProps.length > 0) {
-          sheetName = sheetZeroProps[0].properties.title;
-        } else {
-          sheetName = 'Sheet1';
-        }
-      }
-
-      const reqValues = {
-        spreadsheetId: sheetID,
-        key: api_key_2nd_gen,
-        range: sheetName,
-        majorDimension: 'ROWS'
-      };
-
-      const sheetvalues = (await sheets.spreadsheets.values.get(reqValues)).data.values;
-      const limitedSheetValues = sheetvalues.slice(0, 2000);
-      const { xmlItems, feedDescription } = generateFeedContent(limitedSheetValues, mode);
-
-      const xml = `<?xml version="1.0" encoding="UTF-8"?>
-                    <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
-                    <channel>
-                    <title>${sheetTitle}</title>
-                    <link>https://docs.google.com/spreadsheets/d/${sheetID}</link>
-                    <description> ${feedDescription}</description>
-                    <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
-                    <generator>https://github.com/tgel0/crssnt</generator>
-                    ${xmlItems}
-                    </channel>
-                    </rss>`;
-
-      return response.status(200).contentType('text/xml; charset=utf8').send(xml);
-    } catch (err) {
-      console.error(err);
-      return response.status(400).send('Something went wrong, check the parameters and try again.');
-    }
-  } else {
+  if (!sheetID) {
     return response.status(400).send('Sheet ID not provided, check the parameters and try again.');
   }
-});
+  
+  try {
+    const spreadsheetMeta = (await sheets.spreadsheets.get({
+      spreadsheetId: sheetID,
+      key: api_key_2nd_gen
+    })).data;
+    const sheetTitle = spreadsheetMeta.properties.title;
 
-// Export the functions for testing
-exports.generateFeedContent = generateFeedContent;
-exports.generateFeedAutoMode = generateFeedAutoMode;
-exports.generateFeedManualMode = generateFeedManualMode;
+    if (sheetName === undefined) {
+      const firstVisibleSheet = spreadsheetMeta.sheets.find(s => !s.properties.hidden);
+      if (firstVisibleSheet) {
+        sheetName = firstVisibleSheet.properties.title;
+      } else {
+        sheetName = 'Sheet1';
+        console.warn(`Could not determine sheet name for ID ${sheetID}, falling back to 'Sheet1'.`);
+      }
+    }
+
+    const sheetValuesResponse = (await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetID,
+      key: api_key_2nd_gen,
+      range: sheetName,
+      majorDimension: 'ROWS'
+    })).data;
+
+    const sheetvalues = sheetValuesResponse.values || [];
+    const limitedSheetValues = sheetvalues.slice(0, 2000);
+    const { xmlItems, feedDescription } = generateFeedContent(limitedSheetValues, mode);
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+                  <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+                  <channel>
+                  <title>${sheetTitle}</title>
+                  <link>https://docs.google.com/spreadsheets/d/${sheetID}</link>
+                  <description> ${feedDescription}</description>
+                  <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
+                  <generator>https://github.com/tgel0/crssnt</generator>
+                  ${xmlItems}
+                  </channel>
+                  </rss>`;
+
+      return response.status(200).contentType('text/xml; charset=utf8').send(xml);
+
+    } catch (err) {
+      console.error("Error processing sheet:", err);
+      if (err.code === 404) {
+        return response.status(404).send('Spreadsheet not found. Check the Sheet ID.');
+      } else if (err.code === 403) {
+         return response.status(403).send('Permission denied. Check API key or Sheet sharing settings.');
+      } else if (err.message && err.message.includes('Unable to parse range')) {
+         return response.status(400).send(`Sheet named "${sheetName}" not found or invalid range.`);
+      }
+      return response.status(500).send('Something went wrong processing the spreadsheet.');
+    }
+  }
+);
 
 function generateFeedContent(values, mode) {
   let xmlItems;
   let feedDescription;
 
-  if (mode == 'manual') {
+  if (mode.toLowerCase() === 'manual') {
     xmlItems = generateFeedManualMode(values);
     feedDescription = 'This feed is generated from a Google Sheet using the crssnt feed generator in manual mode.';
   } else {
     xmlItems = generateFeedAutoMode(values);
     feedDescription = 'This feed is generated from a Google Sheet using the crssnt feed generator (auto mode).';
   }
-
   return { xmlItems, feedDescription };
 }
 
 function generateFeedAutoMode(values) {
-  let xmlItemsAll = "" // Initialize as an empty string
-  if (values.length === 0) {
-    return ""; // Return empty string for empty input
+  let xmlItemsAll = ""; 
+  if (!values || values.length === 0) {
+    return "";
   }
-  for (const key in values) {
-    let value = values[key]
-    if(value.length > 0) {      
-      let title = value.shift();
-      let url = value.find(s => s.startsWith('http'));
-      let date = value.find(s => new Date(Date.parse(s)).toUTCString().slice(0,25) == s.slice(0,25))
-      if(url){
-        value.splice(value.indexOf(url), 1); 
-      }      
-      if(date){
-        value.splice(value.indexOf(date), 1); 
+
+  for (const row of values) {
+    if (row && row.length > 0) {
+      let currentRowData = [...row];
+      let title = String(currentRowData.shift() || '');
+
+      if (!title) continue;
+
+      let link = undefined;
+      let dateString = undefined;
+
+      const linkIndex = currentRowData.findIndex(cell => typeof cell === 'string' && cell.startsWith('http'));
+      if (linkIndex !== -1) {
+        link = currentRowData.splice(linkIndex, 1)[0];
       }
-      let xmlItem = `<item>        
-        ${'<title><![CDATA['+title+']]></title>'}
-        ${'<description><![CDATA['+value.slice(0)+']]></description>'}
-        ${url !== undefined ? '<link><![CDATA['+url+']]></link>' : ''}
-        ${url !== undefined ? '<guid><![CDATA['+url+']]></guid>' : ''}
-        <pubDate>${date !== undefined ? new Date(date).toUTCString() : new Date().toUTCString()}</pubDate>
-        </item>`
-        xmlItemsAll = xmlItemsAll + xmlItem
+
+      const dateIndex = currentRowData.findIndex(cell => {
+          if (typeof cell !== 'string') return false;
+          try {
+              const potentialDate = new Date(cell);
+              return !isNaN(potentialDate.getTime()) && potentialDate.toUTCString().slice(0, 25) === cell.slice(0, 25);
+          } catch (e) {
+              return false;
+          }
+      });
+      if (dateIndex !== -1) {
+        dateString = currentRowData.splice(dateIndex, 1)[0];
+      }
+
+      const descriptionContent = currentRowData.map(cell => String(cell || '')).join(' ');
+
+
+      let itemDate = new Date();
+      if (dateString) {
+          try {
+              const parsedDate = new Date(dateString);
+              if (!isNaN(parsedDate.getTime())) {
+                  itemDate = parsedDate;
+              }
+          } catch (e) { /* Keep default date if parsing fails */ }
+      }
+      const pubDateString = itemDate.toUTCString();
+
+      const xmlItem = `<item>
+                        <title><![CDATA[${title}]]></title>
+                        <description><![CDATA[${descriptionContent}]]></description>
+                        ${link !== undefined ? `<link><![CDATA[${link}]]></link>` : ''}
+                        ${link !== undefined ? `<guid><![CDATA[${link}]]></guid>` : ''}
+                        <pubDate>${pubDateString}</pubDate>
+                      </item>`;
+
+      xmlItemsAll += xmlItem;
     }
-  }       
-  return xmlItemsAll
+  }
+  return xmlItemsAll;
 }
 
 function generateFeedManualMode(values) {
@@ -150,3 +178,8 @@ function generateFeedManualMode(values) {
   }
   return xmlItemsAll
 }
+
+
+exports.generateFeedContent = generateFeedContent;
+exports.generateFeedAutoMode = generateFeedAutoMode;
+exports.generateFeedManualMode = generateFeedManualMode;
