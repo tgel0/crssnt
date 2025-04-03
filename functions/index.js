@@ -4,6 +4,10 @@ const { initializeApp } = require("firebase-admin/app");
 const { google } = require('googleapis');
 const sheets = google.sheets('v4');
 
+const { format, isValid } = require('date-fns');
+
+const feedUtils = require('./helper.js');
+
 setGlobalOptions({ region: "us-central1" });
 const api_key_2nd_gen = process.env.SHEETS_API_KEY;
 initializeApp();
@@ -95,67 +99,94 @@ function generateFeedContent(values, mode) {
   return { xmlItems, feedDescription };
 }
 
+
 function generateFeedAutoMode(values) {
-  let xmlItemsAll = ""; 
   if (!values || values.length === 0) {
+    console.error("No values provided to generateFeedAutoMode.");
     return "";
   }
 
+  const parsedItems = [];
   for (const row of values) {
     if (row && row.length > 0) {
-      let currentRowData = [...row];
-      let title = String(currentRowData.shift() || '');
 
-      if (!title) continue;
+      let title = '';
+      let titleIndex = -1;
+      for (let i = 0; i < row.length; i++) {
+          const cellValue = String(row[i] || '').trim();
+          if (cellValue !== '') {
+              title = cellValue; // Found the title
+              titleIndex = i;
+              break; // Stop searching
+          }
+      }
+
+      if (titleIndex === -1) {
+        console.warn('Skipping row because no non-empty cell found:', row);
+        continue;
+    }
+
+      const remainingRowData = row.filter((_, index) => index !== titleIndex);
 
       let link = undefined;
-      let dateString = undefined;
+      let dateObject = null;
+      let descriptionContent = '';
 
-      const linkIndex = currentRowData.findIndex(cell => typeof cell === 'string' && cell.startsWith('http'));
-      if (linkIndex !== -1) {
-        link = currentRowData.splice(linkIndex, 1)[0];
-      }
+      const remainingCells = [];
+      for (const cell of remainingRowData) {
+        const cellString = String(cell || '');
 
-      const dateIndex = currentRowData.findIndex(cell => {
-          if (typeof cell !== 'string') return false;
-          try {
-              const potentialDate = new Date(cell);
-              return !isNaN(potentialDate.getTime()) && potentialDate.toUTCString().slice(0, 25) === cell.slice(0, 25);
-          } catch (e) {
-              return false;
+        if (!link && cellString.startsWith('http')) {
+          link = cellString;
+          continue;
+        }
+
+        if (!dateObject) {
+          const parsed = feedUtils.parseDateString(cellString);
+          if (parsed instanceof Date && isValid(parsed)) {
+            dateObject = parsed;
+            continue;
           }
+        }
+        remainingCells.push(cellString);
+      }
+      descriptionContent = remainingCells.join(' ');
+
+      parsedItems.push({
+        title,
+        link,
+        dateObject, // Can be null if no valid date was found
+        descriptionContent
       });
-      if (dateIndex !== -1) {
-        dateString = currentRowData.splice(dateIndex, 1)[0];
-      }
+    }
+  }
 
-      const descriptionContent = currentRowData.map(cell => String(cell || '')).join(' ');
+  feedUtils.sortFeedItems(parsedItems);
 
+  let xmlItemsAll = "";
+  for (const item of parsedItems) {
+    const itemDate = (item.dateObject instanceof Date && isValid(item.dateObject))
+                     ? item.dateObject
+                     : new Date(); // Fallback to now if dateObject is null or invalid
+    const pubDateString = format(itemDate, "EEE, dd MMM yyyy HH:mm:ss 'GMT'", { timeZone: 'GMT' });
 
-      let itemDate = new Date();
-      if (dateString) {
-          try {
-              const parsedDate = new Date(dateString);
-              if (!isNaN(parsedDate.getTime())) {
-                  itemDate = parsedDate;
-              }
-          } catch (e) { /* Keep default date if parsing fails */ }
-      }
-      const pubDateString = itemDate.toUTCString();
+    const titleCDATA = `<![CDATA[${item.title}]]>`;
+    const descriptionCDATA = `<![CDATA[${item.descriptionContent}]]>`;
+    const linkElement = item.link ? `<link><![CDATA[${item.link}]]></link>` : '';
+    const guidElement = item.link ? `<guid><![CDATA[${item.link}]]></guid>` : '';
 
-      const xmlItem = `<item>
-                        <title><![CDATA[${title}]]></title>
-                        <description><![CDATA[${descriptionContent}]]></description>
-                        ${link !== undefined ? `<link><![CDATA[${link}]]></link>` : ''}
-                        ${link !== undefined ? `<guid><![CDATA[${link}]]></guid>` : ''}
+    const xmlItem = ` <item>
+                        <title>${titleCDATA}</title>
+                        <description>${descriptionCDATA}</description>
+                        ${linkElement}
+                        ${guidElement}
                         <pubDate>${pubDateString}</pubDate>
                       </item>`;
-
-      xmlItemsAll += xmlItem;
-    }
+    xmlItemsAll += xmlItem;
   }
   return xmlItemsAll;
 }
+
 
 function generateFeedManualMode(values) {
   let xmlItemsAll = []
