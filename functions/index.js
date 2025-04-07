@@ -4,7 +4,7 @@ const { initializeApp } = require("firebase-admin/app");
 const { google } = require('googleapis');
 const sheets = google.sheets('v4');
 
-const { format, isValid } = require('date-fns');
+const { isValid } = require('date-fns');
 
 const feedUtils = require('./helper.js');
 
@@ -55,9 +55,14 @@ exports.previewFunctionV2 = onRequest(
 
     const sheetvalues = sheetValuesResponse.values || [];
     const limitedSheetValues = sheetvalues.slice(0, 2000);
-    const { xmlItems, feedDescription } = generateFeedContent(limitedSheetValues, mode);
+    const { itemsResult, feedDescription } = generateFeedContent(limitedSheetValues, mode);
 
-    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+    let feedXml = '';
+    let contentType = 'application/rss+xml; charset=utf8';
+
+    if (mode.toLowerCase() === 'manual') {
+      const xmlItemsString = itemsResult;
+      feedXml = `<?xml version="1.0" encoding="UTF-8"?>
                   <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
                   <channel>
                   <title>${sheetTitle}</title>
@@ -65,11 +70,34 @@ exports.previewFunctionV2 = onRequest(
                   <description> ${feedDescription}</description>
                   <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
                   <generator>https://github.com/tgel0/crssnt</generator>
-                  ${xmlItems}
+                  ${xmlItemsString}
                   </channel>
                   </rss>`;
+    } else {
 
-      return response.status(200).contentType('text/xml; charset=utf8').send(xml);
+      const itemsArray = itemsResult;
+      const latestItemDate = itemsArray.length > 0 && itemsArray[0].dateObject instanceof Date && isValid(itemsArray[0].dateObject)
+                             ? itemsArray[0].dateObject
+                             : new Date();
+
+      const requestUrl = `${request.protocol}://${request.get('host')}${request.url}`;
+
+      const feedData = {
+        metadata: {
+          title: sheetTitle || 'Google Sheet Feed',
+          link: `https://docs.google.com/spreadsheets/d/${sheetID}`,
+          feedUrl: requestUrl,
+          description: feedDescription,
+          lastBuildDate: latestItemDate,
+          generator: 'https://github.com/tgel0/crssnt'
+        },
+        items: itemsArray
+      };
+
+      feedXml = feedUtils.generateRssFeed(feedData);
+    }
+
+    return response.status(200).contentType(contentType).send(feedXml);
 
     } catch (err) {
       console.error("Error processing sheet:", err);
@@ -85,25 +113,28 @@ exports.previewFunctionV2 = onRequest(
   }
 );
 
+
+// --- Core Logic Functions ---
+
 function generateFeedContent(values, mode) {
-  let xmlItems;
+  let itemsResult = [];
   let feedDescription;
 
   if (mode.toLowerCase() === 'manual') {
-    xmlItems = generateFeedManualMode(values);
+    itemsResult = generateFeedManualMode(values);
     feedDescription = 'This feed is generated from a Google Sheet using the crssnt feed generator in manual mode.';
   } else {
-    xmlItems = generateFeedAutoMode(values);
+    itemsResult = generateFeedAutoMode(values);
     feedDescription = 'This feed is generated from a Google Sheet using the crssnt feed generator (auto mode).';
   }
-  return { xmlItems, feedDescription };
+  return { itemsResult, feedDescription };
 }
 
 
 function generateFeedAutoMode(values) {
   if (!values || values.length === 0) {
     console.error("No values provided to generateFeedAutoMode.");
-    return "";
+    return [];
   }
 
   const parsedItems = [];
@@ -163,28 +194,7 @@ function generateFeedAutoMode(values) {
 
   feedUtils.sortFeedItems(parsedItems);
 
-  let xmlItemsAll = "";
-  for (const item of parsedItems) {
-    const itemDate = (item.dateObject instanceof Date && isValid(item.dateObject))
-                     ? item.dateObject
-                     : new Date(); // Fallback to now if dateObject is null or invalid
-    const pubDateString = format(itemDate, "EEE, dd MMM yyyy HH:mm:ss 'GMT'", { timeZone: 'GMT' });
-
-    const titleCDATA = `<![CDATA[${item.title}]]>`;
-    const descriptionCDATA = `<![CDATA[${item.descriptionContent}]]>`;
-    const linkElement = item.link ? `<link><![CDATA[${item.link}]]></link>` : '';
-    const guidElement = item.link ? `<guid><![CDATA[${item.link}]]></guid>` : '';
-
-    const xmlItem = ` <item>
-                        <title>${titleCDATA}</title>
-                        <description>${descriptionCDATA}</description>
-                        ${linkElement}
-                        ${guidElement}
-                        <pubDate>${pubDateString}</pubDate>
-                      </item>`;
-    xmlItemsAll += xmlItem;
-  }
-  return xmlItemsAll;
+  return parsedItems;
 }
 
 

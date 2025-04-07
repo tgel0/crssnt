@@ -31,10 +31,12 @@ describe('generateFeedContent', () => {
 
   it('should call generateFeedAutoMode when mode is "auto" or undefined', () => {
     const values = [['My Title', 'My Desc', 'https://example.com/auto', '2025-04-03T11:00:00Z']];
-    const { xmlItems, feedDescription } = generateFeedContent(values, 'auto');
+    const { itemsResult, feedDescription } = generateFeedContent(values, 'auto');
     expect(feedDescription).toContain('auto mode');
-    expect(xmlItems).toContain('<item>');
-    expect(xmlItems).toContain('My Title');
+    // Check that itemsResult is an array (or check length)
+    expect(Array.isArray(itemsResult)).toBe(true);
+    expect(itemsResult.length).toBe(1);
+    expect(itemsResult[0].title).toBe('My Title');
   });
 });
 
@@ -49,103 +51,121 @@ describe('generateFeedAutoMode', () => {
     jest.useRealTimers();
   });
 
-  it('should generate valid XML items from standard data', () => {
+  it('should return valid item objects from standard data', () => {
     const date1Str = '2025-04-02T09:00:00Z';
     const date2Str = '2025-04-01T08:00:00Z';
     const values = [
       ['Title 1', 'Desc A', 'https://example.com/1', date1Str],
       ['Title 2', 'Desc B', 'https://example.com/2', date2Str],
     ];
-    const result = generateFeedAutoMode(values);
+    const resultItems = generateFeedAutoMode(values); // resultItems is now an array
 
-    expect(result.match(/<item>/g)?.length).toBe(2);
-    expect(result).toContain('<title><![CDATA[Title 1]]></title>');
-    expect(result).toContain('<description><![CDATA[Desc A]]></description>');
-    expect(result).toContain(`<pubDate>${formatToRFC822(date1Str)}</pubDate>`);
-    expect(result).toContain('<title><![CDATA[Title 2]]></title>');
-    expect(result).toContain('<description><![CDATA[Desc B]]></description>');
-    expect(result).toContain(`<pubDate>${formatToRFC822(date2Str)}</pubDate>`);
-    // Check sorting implicitly by order of appearance (Title 1 should appear first)
-    expect(result.indexOf('Title 1')).toBeLessThan(result.indexOf('Title 2'));
+    expect(Array.isArray(resultItems)).toBe(true);
+    expect(resultItems.length).toBe(2);
+
+    // Check sorting: Item 1 (later date) should be first
+    expect(resultItems[0].title).toBe('Title 1');
+    expect(resultItems[0].link).toBe('https://example.com/1');
+    expect(resultItems[0].descriptionContent).toBe('Desc A');
+    expect(resultItems[0].dateObject?.getTime()).toBe(new Date(date1Str).getTime());
+    expect(resultItems[1].title).toBe('Title 2');
+    expect(resultItems[1].link).toBe('https://example.com/2');
+    expect(resultItems[1].descriptionContent).toBe('Desc B');
+    expect(resultItems[1].dateObject?.getTime()).toBe(new Date(date2Str).getTime());
   });
 
-  it('should use first non-empty cell as title if first cell is empty', () => {
-    const values = [['', 'Actual Title', 'Some Desc', 'https://example.com/non-first-title']];
-    const result = generateFeedAutoMode(values);
-
-    expect(result).toContain('<item>');
-    // Check that 'Actual Title' is used as the title
-    expect(result).toContain('<title><![CDATA[Actual Title]]></title>');
-    expect(result).toContain('<description><![CDATA[ Some Desc]]></description>');
-    expect(result).toContain('<link><![CDATA[https://example.com/non-first-title]]></link>'); // Link should still be found
-    expect(result).toContain(`<pubDate>${MOCK_NOW_RFC822}</pubDate>`); // Fallback date
-    expect(result).toContain('</item>');
+  it('should handle multiple values', () => {
+    const values = [
+      ['Title A', 'Desc A', 'https://example.com/a', '2025-04-01T00:00:00Z'],
+      ['Title B', 'Desc B', 'https://example.com/b', '2025-04-02T00:00:00Z'],
+      ['Title C', 'Desc C', 'https://example.com/c', '2025-04-03T00:00:00Z'],
+    ];
+    const resultItems = generateFeedAutoMode(values);
+    expect(resultItems.length).toBe(3);
+    // Check sorting (C should be first)
+    expect(resultItems[0].title).toBe('Title C');
+    expect(resultItems[1].title).toBe('Title B');
+    expect(resultItems[2].title).toBe('Title A');
   });
 
-  it('should handle missing URL and date, using fallback date and no link/guid', () => {
+
+  it('should handle missing URL and date', () => {
     const values = [['Title 3', 'Description Only']];
-    const result = generateFeedAutoMode(values);
+    const resultItems = generateFeedAutoMode(values);
 
-    expect(result).toContain('<item>');
-    expect(result).toContain('<title><![CDATA[Title 3]]></title>');
-    expect(result).toContain('<description><![CDATA[Description Only]]></description>');
-    expect(result).not.toContain('<link>');
-    expect(result).not.toContain('<guid');
-    // Check that the fallback date (mocked 'now') is used
-    expect(result).toContain(`<pubDate>${MOCK_NOW_RFC822}</pubDate>`);
-    expect(result).toContain('</item>');
+    expect(resultItems.length).toBe(1);
+    expect(resultItems[0].title).toBe('Title 3');
+    expect(resultItems[0].descriptionContent).toBe('Description Only');
+    expect(resultItems[0].link).toBeUndefined();
+    expect(resultItems[0].dateObject).toBeNull(); // Expect null if date parsing failed
   });
 
    it('should handle missing description parts', () => {
     const dateStr = '2025-04-02T10:00:00Z';
     const values = [['Title 4', 'https://example.com/4', dateStr]];
-    const result = generateFeedAutoMode(values);
+    const resultItems = generateFeedAutoMode(values);
 
-    expect(result).toContain('<item>');
-    expect(result).toContain('<title><![CDATA[Title 4]]></title>');
-    expect(result).toContain('<description><![CDATA[]]></description>'); // Empty description
-    expect(result).toContain('<link><![CDATA[https://example.com/4]]></link>');
-    expect(result).toContain('<guid><![CDATA[https://example.com/4]]></guid>');
-    expect(result).toContain(`<pubDate>${formatToRFC822(dateStr)}</pubDate>`);
-    expect(result).toContain('</item>');
+    expect(resultItems.length).toBe(1);
+    expect(resultItems[0].title).toBe('Title 4');
+    expect(resultItems[0].descriptionContent).toBe(''); // Description should be empty
+    expect(resultItems[0].link).toBe('https://example.com/4');
+    expect(resultItems[0].dateObject?.getTime()).toBe(new Date(dateStr).getTime());
+  });
+
+  it('should handle empty values array', () => {
+    const resultItems = generateFeedAutoMode([]);
+    expect(resultItems).toEqual([]); // Expect empty array
+  });
+
+  it('should handle null or undefined input', () => {
+    expect(generateFeedAutoMode(null)).toEqual([]);
+    expect(generateFeedAutoMode(undefined)).toEqual([]);
+  });
+
+   it('should handle rows with only a title (first column)', () => {
+    const values = [['Title Only']];
+    const resultItems = generateFeedAutoMode(values);
+    expect(resultItems.length).toBe(1);
+    expect(resultItems[0].title).toBe('Title Only');
+    expect(resultItems[0].descriptionContent).toBe('');
+    expect(resultItems[0].link).toBeUndefined();
+    expect(resultItems[0].dateObject).toBeNull();
+  });
+
+  it('should use first non-empty cell as title if first cell is empty', () => {
+    const values = [['', 'Actual Title', 'Some Desc', 'https://example.com/non-first-title']];
+    const resultItems = generateFeedAutoMode(values);
+
+    expect(resultItems.length).toBe(1);
+    // Check that 'Actual Title' is used as the title
+    expect(resultItems[0].title).toBe('Actual Title');
+    // Check that the title cell ('Actual Title') is NOT included in the description
+    // Description should only contain 'Some Desc' (link is handled separately)
+    // Note: If user accepted whitespace, test should be ' Some Desc'
+    expect(resultItems[0].descriptionContent).toBe(' Some Desc');
+    expect(resultItems[0].link).toBe('https://example.com/non-first-title'); // Link should still be found
+    expect(resultItems[0].dateObject).toBeNull(); // No date provided
   });
 
    it('should handle rows with only a title', () => {
     const values = [['Title Only']];
-    const result = generateFeedAutoMode(values);
-    expect(result).toContain('<item>');
-    expect(result).toContain('<title><![CDATA[Title Only]]></title>');
-    expect(result).toContain('<description><![CDATA[]]></description>');
-    expect(result).not.toContain('<link>');
-    expect(result).not.toContain('<guid');
-    expect(result).toContain(`<pubDate>${MOCK_NOW_RFC822}</pubDate>`); // Check fallback date
-    expect(result).toContain('</item>');
-  });
+    const resultItems = generateFeedAutoMode(values);
+    expect(resultItems.length).toBe(1);
+    expect(resultItems[0].title).toBe('Title Only');
+    expect(resultItems[0].descriptionContent).toBe('');
+    expect(resultItems[0].link).toBeUndefined();
+    expect(resultItems[0].dateObject).toBeNull();
+   });
 
   it('should skip rows where all cells are empty or whitespace', () => {
     const values = [
         ['', null, '   '], 
         ['Real Title', 'Desc']
     ];
-    const result = generateFeedAutoMode(values);
+    const resultItems = generateFeedAutoMode(values);
     // Should only generate one item (for the second row)
-    expect(result.match(/<item>/g)?.length).toBe(1);
-    expect(result).toContain('Real Title');
-    expect(result).not.toContain('<title><![CDATA[]]></title>'); // Ensure no item from empty row
-    expect(result).not.toContain('<title><![CDATA[null]]></title>'); // Ensure no item from empty row
-    expect(result).not.toContain('<title><![CDATA[   ]]></title>'); // Ensure no item from empty row
-  });
-
-
-  it('should handle empty values array', () => {
-    const values = [];
-    const result = generateFeedAutoMode(values);
-    expect(result).toBe('');
-  });
-
-  it('should handle null or undefined input', () => {
-    expect(generateFeedAutoMode(null)).toBe('');
-    expect(generateFeedAutoMode(undefined)).toBe('');
+    expect(resultItems.length).toBe(1);
+    expect(resultItems[0].title).toBe('Real Title');
   });
 
   // --- DATE HANDLING TESTS ---
@@ -161,26 +181,21 @@ describe('generateFeedAutoMode', () => {
       ['Title Late', 'Desc Late', dateLateStr], // Latest date
     ];
 
-    const result = generateFeedAutoMode(values);
+    const resultItems = generateFeedAutoMode(values);
 
-    expect(result.match(/<item>/g)?.length).toBe(3);
+    expect(resultItems.length).toBe(3);
 
-    // Check sorting using indexOf: 'Title Late' should appear before 'Title Early'
-    const indexLate = result.indexOf('Title Late');
-    const indexMid = result.indexOf('Title Mid');
-    const indexEarly = result.indexOf('Title Early');
+    // Check sorting: Late should be first, Early should be last
+    expect(resultItems[0].title).toBe('Title Late');
+    expect(resultItems[1].title).toBe('Title Mid');
+    expect(resultItems[2].title).toBe('Title Early');
 
-    expect(indexLate).toBeGreaterThan(-1); // Ensure titles are found
-    expect(indexMid).toBeGreaterThan(-1);
-    expect(indexEarly).toBeGreaterThan(-1);
-
-    expect(indexLate).toBeLessThan(indexMid); // Late before Mid
-    expect(indexMid).toBeLessThan(indexEarly); // Mid before Early
-
-    // Check that dates were parsed and formatted correctly
-    expect(result).toContain(`<pubDate>${formatToRFC822(dateLateStr)}</pubDate>`); // Expect Wed, 02 Apr 2025 18:30:00 GMT
-    expect(result).toContain(`<pubDate>${formatToRFC822(dateMidStr)}</pubDate>`);
-    expect(result).toContain(`<pubDate>${formatToRFC822(dateEarlyStr)}</pubDate>`);
+    // Check that dates were parsed correctly (compare timestamps)
+    // Note: Parsing '04/01/2025' might assume local time depending on helper implementation,
+    // but getTime() gives UTC milliseconds regardless, allowing comparison.
+    expect(resultItems[0].dateObject?.getTime()).toBe(new Date(dateLateStr).getTime());
+    expect(resultItems[1].dateObject?.getTime()).toBe(new Date(dateMidStr).getTime());
+    expect(resultItems[2].dateObject?.getTime()).toBe(new Date(dateEarlyStr).getTime());
   });
 
   it('should sort items with invalid/missing dates to the end', () => {
@@ -193,29 +208,20 @@ describe('generateFeedAutoMode', () => {
       ['Title No Date', 'Desc No Date'], // Missing date string
     ];
 
-    const result = generateFeedAutoMode(values);
+    const resultItems = generateFeedAutoMode(values);
 
-    expect(result.match(/<item>/g)?.length).toBe(3);
+    expect(resultItems.length).toBe(3);
 
     // Check that the valid date item appears first
-    const indexValid = result.indexOf('Title Valid Date');
-    const indexInvalid = result.indexOf('Title Invalid Date');
-    const indexNoDate = result.indexOf('Title No Date');
+    expect(resultItems[0].title).toBe('Title Valid Date');
+    expect(resultItems[0].dateObject?.getTime()).toBe(new Date(dateValidStr).getTime());
 
-    expect(indexValid).toBeGreaterThan(-1);
-    expect(indexInvalid).toBeGreaterThan(-1);
-    expect(indexNoDate).toBeGreaterThan(-1);
-
-    expect(indexValid).toBeLessThan(indexInvalid); // Valid date item comes before invalid date item
-    expect(indexValid).toBeLessThan(indexNoDate); // Valid date item comes before no date item
-
-    // Check that the item with the valid date has the correct pubDate
-    expect(result).toContain(`<pubDate>${formatToRFC822(dateValidStr)}</pubDate>`);
-
-    // Check that the items with invalid/missing dates use the fallback date (mocked 'now')
-    // Use regex to count occurrences of the fallback date string
-    const fallbackDateRegex = new RegExp(MOCK_NOW_RFC822.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'); // Escape regex special chars
-    const fallbackDateCount = (result.match(fallbackDateRegex) || []).length;
-    expect(fallbackDateCount).toBe(2); // Two items should have the fallback date
+    // Check that the other items have null dateObjects
+    expect(resultItems[1].dateObject).toBeNull();
+    expect(resultItems[2].dateObject).toBeNull();
+    // Check titles to ensure they are the correct items (order between [1] and [2] isn't guaranteed)
+    const titlesAfterValid = [resultItems[1].title, resultItems[2].title];
+    expect(titlesAfterValid).toContain('Title Invalid Date');
+    expect(titlesAfterValid).toContain('Title No Date');
   });
 });
