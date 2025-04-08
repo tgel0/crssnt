@@ -1,5 +1,10 @@
 const crypto = require('crypto');
-const { parseISO, isValid, format } = require('date-fns');
+const { google } = require('googleapis');
+const sheets = google.sheets('v4');
+const { parseISO, isValid, format, formatISO } = require('date-fns');
+
+
+// --- XML Escaping ---
 
 function escapeXmlMinimal(unsafe) {
     if (typeof unsafe !== 'string') {
@@ -16,6 +21,8 @@ function escapeXmlMinimal(unsafe) {
     });
   }
   
+
+// --- Date Handling ---
 
 function parseDateString(dateString) {
     if (!dateString || typeof dateString !== 'string') {
@@ -67,6 +74,145 @@ function sortFeedItems(itemsData) {
             return 0;
         }
     });
+}
+
+// --- Google Sheet Fetching ---
+
+async function getSheetData(sheetID, sheetName, apiKey) {
+    const metaRequest = { spreadsheetId: sheetID, key: apiKey };
+    const spreadsheetMeta = (await sheets.spreadsheets.get(metaRequest)).data;
+    const sheetTitle = spreadsheetMeta.properties.title;
+
+    let targetSheetName = sheetName;
+    if (targetSheetName === undefined) {
+        const firstVisibleSheet = spreadsheetMeta.sheets.find(s => !s.properties.hidden);
+        if (firstVisibleSheet) {
+            targetSheetName = firstVisibleSheet.properties.title;
+        } else {
+            targetSheetName = 'Sheet1'; // Default fallback
+            console.warn(`getSheetData: Could not determine sheet name for ID ${sheetID}, falling back to '${targetSheetName}'.`);
+        }
+    }
+
+    const valuesRequest = {
+        spreadsheetId: sheetID,
+        key: apiKey,
+        range: targetSheetName,
+        majorDimension: 'ROWS'
+    };
+    const sheetValuesResponse = (await sheets.spreadsheets.values.get(valuesRequest)).data;
+    const values = sheetValuesResponse.values || [];
+
+    return { title: sheetTitle, values: values, sheetName: targetSheetName };
+}
+
+
+// --- Sheet Data Parsing ---
+
+function parseSheetRowAutoMode(row) {
+    if (!row || row.length === 0) return null;
+
+    let title = '';
+    let titleIndex = -1;
+    for (let i = 0; i < row.length; i++) {
+        const cellValue = String(row[i] || '').trim();
+        if (cellValue !== '') {
+            title = cellValue;
+            titleIndex = i;
+            break;
+        }
+    }
+    if (titleIndex === -1) return null; // Skip row if no title found
+
+    const remainingRowData = row.filter((_, index) => index !== titleIndex);
+    let link = undefined;
+    let dateObject = null;
+    let descriptionContent = '';
+    const potentialDescriptionCells = [];
+
+    for (const cell of remainingRowData) {
+        const cellString = String(cell || '');
+
+        if (!link && cellString.startsWith('http')) {
+            link = cellString;
+            continue;
+        }
+        if (!dateObject) {
+            const parsed = parseDateString(cellString);
+            if (parsed instanceof Date && isValid(parsed)) {
+                dateObject = parsed;
+                continue;
+            }
+        }
+        potentialDescriptionCells.push(cellString);
+    }
+    descriptionContent = potentialDescriptionCells.filter(s => s.trim() !== '').join(' ');
+
+    return { title, link, dateObject, descriptionContent };
+}
+
+
+// --- Feed Generation ---
+
+function generateItemData(values, mode) {
+    let items = [];
+    if (mode.toLowerCase() === 'manual') {
+        items = generateFeedManualModeInternal(values);
+        sortFeedItems(items);
+    } else {
+        items = values.map(row => parseSheetRowAutoMode(row)).filter(item => item !== null);
+        sortFeedItems(items);
+    }
+    return items;
+}
+
+function generateFeedManualModeInternal(values) {
+    const items = [];
+    if (!values || values.length < 2) return items;
+    const headers = values[0];
+    const headerMap = {};
+    headers.forEach((header, index) => {
+        if (typeof header === 'string') headerMap[header.toLowerCase().trim()] = index;
+    });
+    const titleIndex = headerMap['title'];
+    const linkIndex = headerMap['link'];
+    const descriptionIndex = headerMap['description'];
+    const dateIndex = headerMap['pubdate'] ?? headerMap['date'] ?? headerMap['published'];
+
+    for (let i = 1; i < values.length; i++) {
+        const row = values[i];
+        if (row && row.length > 0) {
+            const title = titleIndex !== undefined ? String(row[titleIndex] || '').trim() : '';
+            if (!title) continue;
+            const link = linkIndex !== undefined ? String(row[linkIndex] || '').trim() : undefined;
+            const descriptionContent = descriptionIndex !== undefined ? String(row[descriptionIndex] || '') : '';
+            const dateString = dateIndex !== undefined ? String(row[dateIndex] || '') : undefined;
+            let dateObject = parseDateString(dateString);
+            items.push({ title, link: link || undefined, dateObject, descriptionContent });
+        }
+    }
+    return items;
+}
+
+function buildFeedData(sheetValues, mode, sheetTitle, sheetID, requestUrl) {
+    const items = generateItemData(sheetValues, mode);
+    const feedDescription = `Feed from Google Sheet (${mode} mode).`;
+    const latestItemDate = items.length > 0 && items[0].dateObject instanceof Date && isValid(items[0].dateObject)
+                           ? items[0].dateObject : new Date();
+
+    const feedData = {
+        metadata: {
+            title: sheetTitle || 'Google Sheet Feed',
+            link: `https://docs.google.com/spreadsheets/d/${sheetID}`,
+            feedUrl: requestUrl,
+            description: feedDescription,
+            lastBuildDate: latestItemDate,
+            generator: 'https://github.com/tgel0/crssnt',
+            id: `urn:google-sheet:${sheetID}` // Used for Atom <id>
+        },
+        items: items
+    };
+    return feedData;
 }
 
 
@@ -141,7 +287,7 @@ function generateRssFeed(feedData) {
 
 
 module.exports = {
-    parseDateString,
-    sortFeedItems,
+    getSheetData,
+    buildFeedData,
     generateRssFeed
 };
