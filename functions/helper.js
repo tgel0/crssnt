@@ -183,7 +183,6 @@ function generateFeedManualModeInternal(values) {
         const row = values[i];
         if (row && row.length > 0) {
             const title = titleIndex !== undefined ? String(row[titleIndex] || '').trim() : '';
-            if (!title) continue;
             const link = linkIndex !== undefined ? String(row[linkIndex] || '').trim() : undefined;
             const descriptionContent = descriptionIndex !== undefined ? String(row[descriptionIndex] || '') : '';
             const dateString = dateIndex !== undefined ? String(row[dateIndex] || '') : undefined;
@@ -285,9 +284,73 @@ function generateRssFeed(feedData) {
     return feedXml;
 }
 
+function generateAtomEntryXml(itemData, feedMetadata) {
+    const itemDate = (itemData.dateObject instanceof Date && isValid(itemData.dateObject))
+                     ? itemData.dateObject : new Date();
+    const updatedString = formatISO(itemDate);
+
+    const title = itemData.title || 'Untitled Entry';
+    const description = itemData.descriptionContent || '';
+    const link = itemData.link;
+
+    let entryId;
+    const baseId = feedMetadata.id || feedMetadata.link || `urn:uuid:${crypto.createHash('sha1').update(feedMetadata.title || 'feed').digest('hex')}`; // Generate base URN if needed
+    
+    if (link && link.startsWith('http')) {
+        entryId = link;
+    } else {
+        const stringToHash = `${title}::${description}::${updatedString}`;
+        const hash = crypto.createHash('sha1').update(stringToHash).digest('hex');
+        entryId = `${baseId}:${hash}`;
+    }
+
+    const titleElement = `<title>${escapeXmlMinimal(title)}</title>`;
+    const idElement = `<id>${escapeXmlMinimal(entryId)}</id>`; //
+    const updatedElement = `<updated>${updatedString}</updated>`;
+    const linkElement = link ? `<link href="${escapeXmlMinimal(link)}" rel="alternate" />` : '';
+    const contentElement = `<content type="html"><![CDATA[${description}]]></content>`;
+    return `<entry>
+                ${titleElement}
+                ${idElement}
+                ${updatedElement}
+                ${linkElement}
+                ${contentElement}
+            </entry>`;
+}
+
+function generateAtomFeed(feedData) {
+    if (!feedData || !feedData.metadata || !Array.isArray(feedData.items)) {
+       console.error("Invalid feedData passed to generateAtomFeed");
+       return `<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom"><title>Error Generating Feed</title><updated>${formatISO(new Date())}</updated><id>urn:uuid:error</id></feed>`;
+   }
+   const { metadata, items } = feedData;
+
+   const feedUpdatedDate = (metadata.lastBuildDate instanceof Date && isValid(metadata.lastBuildDate))
+                         ? metadata.lastBuildDate : new Date();
+   const feedUpdatedString = formatISO(feedUpdatedDate);
+
+   const feedId = metadata.id || metadata.feedUrl || metadata.link || `urn:uuid:${crypto.createHash('sha1').update(metadata.title || 'untitled').digest('hex')}`;
+   const entryXmlStrings = items.map(item => generateAtomEntryXml(item, metadata)).join('');
+
+   const feedXml = `<?xml version="1.0" encoding="utf-8"?>
+                    <feed xmlns="http://www.w3.org/2005/Atom">
+                    <title>${escapeXmlMinimal(metadata.title || 'Untitled Feed')}</title>
+                    ${metadata.description ? `<subtitle>${escapeXmlMinimal(metadata.description)}</subtitle>` : ''}
+                    <link href="${escapeXmlMinimal(metadata.feedUrl || '')}" rel="self" type="application/atom+xml"/>
+                    <link href="${escapeXmlMinimal(metadata.link || '')}" rel="alternate"/>
+                    <id>${escapeXmlMinimal(feedId)}</id>
+                    <updated>${feedUpdatedString}</updated>
+                    ${metadata.generator ? `<generator uri="https://github.com/tgel0/crssnt">${escapeXmlMinimal(metadata.generator)}</generator>` : ''}
+                    ${entryXmlStrings}
+                    </feed>`;
+
+   return feedXml;
+}
+
 
 module.exports = {
     getSheetData,
     buildFeedData,
-    generateRssFeed
+    generateRssFeed,
+    generateAtomFeed
 };

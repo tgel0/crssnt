@@ -31,8 +31,16 @@ async function handleSheetRequest(request, response, outputFormat = 'rss') {
 
     const feedData = feedUtils.buildFeedData(limitedSheetValues, mode, sheetTitle, sheetID, requestUrl);
 
-    feedOutput = feedUtils.generateRssFeed(feedData);
-    contentType = 'application/rss+xml; charset=utf8';
+    let feedOutput = '';
+    let contentType = '';
+
+    if (outputFormat === 'atom') {
+        feedOutput = feedUtils.generateAtomFeed(feedData);
+        contentType = 'application/atom+xml; charset=utf8';
+    } else { // Default to RSS
+        feedOutput = feedUtils.generateRssFeed(feedData);
+        contentType = 'application/rss+xml; charset=utf8';
+    }
 
     response.set('Cache-Control', 'public, max-age=300, s-maxage=300');
     return response.status(200).contentType(contentType).send(feedOutput);
@@ -66,4 +74,9 @@ async function handleSheetRequest(request, response, outputFormat = 'rss') {
 exports.previewFunctionV2 = onRequest(
   { cors: true, secrets: ["SHEETS_API_KEY"], cpu: 0.2 },
   (request, response) => handleSheetRequest(request, response, 'rss')
+);
+
+exports.sheetToAtom = onRequest(
+  { cors: true, secrets: ["SHEETS_API_KEY"], cpu: 0.1 },
+  (request, response) => handleSheetRequest(request, response, 'atom')
 );
