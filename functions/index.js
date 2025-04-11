@@ -13,7 +13,13 @@ async function handleSheetRequest(request, response, outputFormat = 'rss') {
   const pathParts = request.path.split("/");
   const sheetIDfromURL = pathParts.length > 6 ? pathParts[6] : undefined;
   const sheetID = request.query.id || sheetIDfromURL;
-  let sheetName = request.query.name;
+  let sheetNames = request.query.name; // Can be string or array if multiple 'name=' are present
+  if (Array.isArray(sheetNames)) {
+      sheetNames = sheetNames.filter(name => name && typeof name === 'string' && name.trim() !== '');
+      if (sheetNames.length === 0) sheetNames = undefined; 
+  } else if (typeof sheetNames === 'string' && sheetNames.trim() === '') {
+      sheetNames = undefined;
+  }
   const mode = request.query.mode || 'auto';
 
   if (!sheetID) {
@@ -22,14 +28,13 @@ async function handleSheetRequest(request, response, outputFormat = 'rss') {
 
   try {
 
-    const { title: sheetTitle, values: sheetvalues, sheetName: actualSheetName } = await feedUtils.getSheetData(sheetID, sheetName, api_key_2nd_gen);
-    const limitedSheetValues = sheetvalues.slice(0, 2000);
+    const { title: sheetTitle, sheetData: sheetData } = await feedUtils.getSheetData(sheetID, sheetNames, api_key_2nd_gen);
 
     const baseUrl = "https://crssnt.com"
     const pathAndQuery = request.originalUrl || request.url;
     const requestUrl = `${baseUrl}${pathAndQuery}`;
 
-    const feedData = feedUtils.buildFeedData(limitedSheetValues, mode, sheetTitle, sheetID, requestUrl);
+    const feedData = feedUtils.buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl);
 
     let feedOutput = '';
     let contentType = '';
@@ -73,6 +78,11 @@ async function handleSheetRequest(request, response, outputFormat = 'rss') {
 
 exports.previewFunctionV2 = onRequest(
   { cors: true, secrets: ["SHEETS_API_KEY"], cpu: 0.2 },
+  (request, response) => handleSheetRequest(request, response, 'rss')
+);
+
+exports.sheetToRSS = onRequest(
+  { cors: true, secrets: ["SHEETS_API_KEY"], cpu: 0.1 },
   (request, response) => handleSheetRequest(request, response, 'rss')
 );
 

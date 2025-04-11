@@ -78,32 +78,45 @@ function sortFeedItems(itemsData) {
 
 // --- Google Sheet Fetching ---
 
-async function getSheetData(sheetID, sheetName, apiKey) {
+async function getSheetData(sheetID, sheetNames, apiKey) {
     const metaRequest = { spreadsheetId: sheetID, key: apiKey };
     const spreadsheetMeta = (await sheets.spreadsheets.get(metaRequest)).data;
     const sheetTitle = spreadsheetMeta.properties.title;
 
-    let targetSheetName = sheetName;
-    if (targetSheetName === undefined) {
+    let targetSheetNames = [];
+    if (sheetNames === undefined || (Array.isArray(sheetNames) && sheetNames.length === 0)) {
+        // Determine default sheet name if none provided
         const firstVisibleSheet = spreadsheetMeta.sheets.find(s => !s.properties.hidden);
-        if (firstVisibleSheet) {
-            targetSheetName = firstVisibleSheet.properties.title;
-        } else {
-            targetSheetName = 'Sheet1'; // Default fallback
-            console.warn(`getSheetData: Could not determine sheet name for ID ${sheetID}, falling back to '${targetSheetName}'.`);
-        }
+        targetSheetNames = firstVisibleSheet ? [firstVisibleSheet.properties.title] : ['Sheet1'];
+        console.warn(`getSheetData: No sheet names provided for ID ${sheetID}, using default: '${targetSheetNames[0]}'.`);
+    } else if (typeof sheetNames === 'string') {
+        targetSheetNames = [sheetNames];
+    } else { // Should be an array
+        targetSheetNames = sheetNames;
     }
+
+    const ranges = targetSheetNames.map(name => name);
 
     const valuesRequest = {
         spreadsheetId: sheetID,
         key: apiKey,
-        range: targetSheetName,
+        ranges: ranges,
         majorDimension: 'ROWS'
     };
-    const sheetValuesResponse = (await sheets.spreadsheets.values.get(valuesRequest)).data;
-    const values = sheetValuesResponse.values || [];
+    const batchGetResponse = (await sheets.spreadsheets.values.batchGet(valuesRequest)).data;
+    
+    const sheetData = {};
+    if (batchGetResponse.valueRanges) {
+        batchGetResponse.valueRanges.forEach(valueRange => {
+            // Extract sheet name from the range string (e.g., "Sheet1!A1:Z1000" -> "Sheet1")
+            const rangeName = valueRange.range.split('!')[0].replace(/'/g, ''); // Remove quotes if present
+            sheetData[rangeName] = valueRange.values || [];
+        });
+    } else {
+         console.warn(`getSheetData: No valueRanges returned for Sheet ID ${sheetID}, Ranges: ${JSON.stringify(ranges)}`);
+    }
 
-    return { title: sheetTitle, values: values, sheetName: targetSheetName };
+    return { title: sheetTitle, sheetData: sheetData };
 }
 
 
@@ -193,11 +206,22 @@ function generateFeedManualModeInternal(values) {
     return items;
 }
 
-function buildFeedData(sheetValues, mode, sheetTitle, sheetID, requestUrl) {
-    const items = generateItemData(sheetValues, mode);
+function buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl) {
+    let allItems = [];
+    let sheetNames = Object.keys(sheetData);
+
+    for (const sheetName of sheetNames) {
+        const values = sheetData[sheetName];
+        // Pass the correct values array (including header if manual)
+        const itemsFromSheet = generateItemData(values, mode);
+        allItems = allItems.concat(itemsFromSheet);
+    }
+
+    sortFeedItems(allItems);
+
     const feedDescription = `Feed from Google Sheet (${mode} mode).`;
-    const latestItemDate = items.length > 0 && items[0].dateObject instanceof Date && isValid(items[0].dateObject)
-                           ? items[0].dateObject : new Date();
+    const latestItemDate = allItems.length > 0 && allItems[0].dateObject instanceof Date && isValid(allItems[0].dateObject)
+                           ? allItems[0].dateObject : new Date();
 
     const feedData = {
         metadata: {
@@ -209,7 +233,7 @@ function buildFeedData(sheetValues, mode, sheetTitle, sheetID, requestUrl) {
             generator: 'https://github.com/tgel0/crssnt',
             id: `urn:google-sheet:${sheetID}` // Used for Atom <id>
         },
-        items: items
+        items: allItems
     };
     return feedData;
 }
