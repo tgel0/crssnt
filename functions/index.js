@@ -6,6 +6,8 @@ const feedUtils = require('./helper.js');
 
 setGlobalOptions({ region: "us-central1" });
 const api_key_2nd_gen = process.env.SHEETS_API_KEY;
+const BLOCKED_SHEET_IDS_STRING = process.env.BLOCKED_SHEET_IDS || "";
+const BLOCKED_SHEET_IDS = new Set(BLOCKED_SHEET_IDS_STRING.split(',').map(id => id.trim()).filter(id => id));
 initializeApp();
 
 async function handleSheetRequest(request, response, outputFormat = 'rss') {
@@ -21,16 +23,24 @@ async function handleSheetRequest(request, response, outputFormat = 'rss') {
       sheetNames = undefined;
   }
   const mode = request.query.mode || 'auto';
+  const baseUrl = "https://crssnt.com"
 
   if (!sheetID) {
     return response.status(400).send('Sheet ID not provided in query (?id=) or path.');
+  }
+
+    // *** Blocklist Check ***
+    if (BLOCKED_SHEET_IDS.has(sheetID)) {
+      console.log(`Sheet ID ${sheetID} is on the blocklist. Returning placeholder feed.`);
+      const { feedXml, contentType, statusCode } = feedUtils.generateBlockedFeedPlaceholder(sheetID, outputFormat, baseUrl);
+      response.set('Cache-Control', 'public, max-age=3600, s-maxage=3600'); // Cache placeholder longer
+      return response.status(statusCode).contentType(contentType).send(feedXml);
   }
 
   try {
 
     const { title: sheetTitle, sheetData: sheetData } = await feedUtils.getSheetData(sheetID, sheetNames, api_key_2nd_gen);
 
-    const baseUrl = "https://crssnt.com"
     const pathAndQuery = request.originalUrl || request.url;
     const requestUrl = `${baseUrl}${pathAndQuery}`;
 

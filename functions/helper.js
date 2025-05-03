@@ -445,10 +445,60 @@ function generateAtomFeed(feedData) {
    return feedXml;
 }
 
+function generateBlockedFeedPlaceholder(sheetID, outputFormat, feedBaseUrl) {
+    const statusCode = 410; // Gone
+    let placeholderFeed = '';
+    let contentType = '';
+    const placeholderTitle = "Feed Unavailable";
+    const placeholderDesc = `The requested Google Sheet (ID: ${sheetID}) is currently unavailable or has been blocked by the administrator.`;
+    const placeholderLink = 'https://crssnt.com/';
+
+    if (outputFormat === 'atom') {
+        contentType = 'application/atom+xml; charset=utf8';
+        const updated = formatISO(new Date());
+        const feedId = `urn:crssnt:blocked:${sheetID}`;
+        placeholderFeed = `<?xml version="1.0" encoding="utf-8"?>
+                            <feed xmlns="http://www.w3.org/2005/Atom">
+                            <title>${escapeXmlMinimal(placeholderTitle)}</title>
+                            <link href="${escapeXmlMinimal(placeholderLink)}" rel="alternate"/>
+                            <id>${escapeXmlMinimal(feedId)}</id>
+                            <updated>${updated}</updated>
+                            <subtitle>${escapeXmlMinimal(placeholderDesc)}</subtitle>
+                            <entry>
+                                <title>Sheet Unavailable</title>
+                                <id>${escapeXmlMinimal(feedId)}:entry:${Date.now()}</id>
+                                <updated>${updated}</updated>
+                                <content type="text">${escapeXmlMinimal(placeholderDesc)}</content>
+                            </entry>
+                            </feed>`;
+    } else { // Default to RSS
+        contentType = 'application/rss+xml; charset=utf8';
+        const pubDate = format(new Date(), "EEE, dd MMM yyyy HH:mm:ss 'GMT'", { timeZone: 'GMT' });
+        placeholderFeed = `<?xml version="1.0" encoding="UTF-8"?>
+                            <rss version="2.0">
+                            <channel>
+                            <title>${escapeXmlMinimal(placeholderTitle)}</title>
+                            <link>${escapeXmlMinimal(placeholderLink)}</link>
+                            <description>${escapeXmlMinimal(placeholderDesc)}</description>
+                            <lastBuildDate>${pubDate}</lastBuildDate>
+                            <item>
+                                <title>Sheet Unavailable</title>
+                                <description>${escapeXmlMinimal(placeholderDesc)}</description>
+                                <pubDate>${pubDate}</pubDate>
+                                <guid isPermaLink="false">unavailable-${escapeXmlMinimal(sheetID)}-${Date.now()}</guid>
+                            </item>
+                            </channel>
+                            </rss>`;
+    }
+
+    return { feedXml: placeholderFeed, contentType, statusCode };
+}
+
 
 module.exports = {
     getSheetData,
     buildFeedData,
     generateRssFeed,
-    generateAtomFeed
+    generateAtomFeed,
+    generateBlockedFeedPlaceholder
 };
