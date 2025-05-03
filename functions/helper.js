@@ -184,24 +184,79 @@ function generateFeedManualModeInternal(values) {
     if (!values || values.length < 2) return items;
     const headers = values[0];
     const headerMap = {};
+    const customHeaderMap = {};
+    const standardFieldAliases = {
+        title: ['title'],
+        link: ['link', 'url', 'uri', 'href'],
+        description: ['description', 'desc', 'summary', 'content', 'content:encoded'], // Treat content:encoded as description
+        dateObject: ['pubdate', 'date', 'published', 'updated', 'timestamp', 'created']
+    };
+
     headers.forEach((header, index) => {
-        if (typeof header === 'string') headerMap[header.toLowerCase().trim()] = index;
+        if (typeof header !== 'string' || header.trim() === '') return;
+        const lowerHeader = header.toLowerCase().trim();
+        let foundStandard = false;
+        for (const standardField in standardFieldAliases) {
+            if (standardFieldAliases[standardField].includes(lowerHeader)) {
+                // Only map the first occurrence of an alias for a standard field
+                if (headerMap[standardField] === undefined) {
+                    headerMap[standardField] = index;
+                }
+                foundStandard = true;
+                break;
+            }
+        }
+        // If not a standard field alias, treat as custom
+        if (!foundStandard) {
+            // Use original header name (preserving case) as key for custom field index map
+            customHeaderMap[header] = index;
+        }
     });
+
     const titleIndex = headerMap['title'];
     const linkIndex = headerMap['link'];
     const descriptionIndex = headerMap['description'];
-    const dateIndex = headerMap['pubdate'] ?? headerMap['date'] ?? headerMap['published'];
+    const dateIndex = headerMap['dateObject'];
+
+    headers.forEach((header, index) => {
+        if (typeof header === 'string') headerMap[header.toLowerCase().trim()] = index;
+    });
 
     for (let i = 1; i < values.length; i++) {
         const row = values[i];
-        if (row && row.length > 0) {
-            const title = titleIndex !== undefined ? String(row[titleIndex] || '').trim() : '';
-            const link = linkIndex !== undefined ? String(row[linkIndex] || '').trim() : undefined;
-            const descriptionContent = descriptionIndex !== undefined ? String(row[descriptionIndex] || '') : '';
-            const dateString = dateIndex !== undefined ? String(row[dateIndex] || '') : undefined;
-            let dateObject = parseDateString(dateString);
-            items.push({ title, link: link || undefined, dateObject, descriptionContent });
+        if (!row || row.every(cell => String(cell || '').trim() === '')) continue;
+
+        let title = titleIndex !== undefined ? String(row[titleIndex] || '').trim() : '';
+        if (title === '') title = '(Untitled)'; // Placeholder
+
+        const link = linkIndex !== undefined ? String(row[linkIndex] || '').trim() : undefined;
+        const descriptionContent = descriptionIndex !== undefined ? String(row[descriptionIndex] || '') : '';
+        const dateString = dateIndex !== undefined ? String(row[dateIndex] || '') : undefined;
+        let dateObject = parseDateString(dateString);
+
+        // Collect custom fields
+        const customFields = {};
+        for (const customHeader in customHeaderMap) {
+            const customIndex = customHeaderMap[customHeader];
+            const customValue = row[customIndex] || '';
+            // Store custom field if it has a value
+            if (String(customValue).trim() !== '') {
+                 // Sanitize header to create a valid XML tag name for later use
+                 // Allow alphanumeric, underscore, hyphen, colon. Replace others with underscore. Ensure starts correctly.
+                 const tagName = customHeader.replace(/[^a-zA-Z0-9_:-]/g, '_').replace(/^[^a-zA-Z_:]/, '_');
+                 if (tagName) {
+                    customFields[tagName] = String(customValue); // Store with sanitized tag name
+                 }
+            }
         }
+
+        items.push({
+             title,
+             link: link || undefined,
+             dateObject,
+             descriptionContent,
+             customFields: Object.keys(customFields).length > 0 ? customFields : undefined // Add only if non-empty
+        });
     }
     return items;
 }
@@ -238,6 +293,21 @@ function buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl) {
     return feedData;
 }
 
+function generateCustomFieldsXml(customFields) {
+    if (!customFields || typeof customFields !== 'object') {
+        return '';
+    }
+    let customXml = '';
+    for (const tagName in customFields) {
+        // Basic check if tagName seems valid (already sanitized during parsing)
+        if (tagName && typeof customFields[tagName] === 'string') {
+             // Escape the value, do NOT use CDATA by default for unknown tags
+            customXml += `<${tagName}>${escapeXmlMinimal(customFields[tagName])}</${tagName}>\n      `;
+        }
+    }
+    return customXml.trimEnd(); // Remove trailing space/newline
+}
+
 
 function generateRssItemXml(itemData) {
     const itemDate = (itemData.dateObject instanceof Date && isValid(itemData.dateObject))
@@ -259,6 +329,7 @@ function generateRssItemXml(itemData) {
         const fallbackGuid = crypto.createHash('sha1').update(stringToHash).digest('hex');
         guidElement = `<guid isPermaLink="false">${fallbackGuid}</guid>`;
     }
+    const customFieldsXml = generateCustomFieldsXml(itemData.customFields); 
 
     return `<item>
                 <title>${titleCDATA}</title>
@@ -266,6 +337,7 @@ function generateRssItemXml(itemData) {
                 ${linkElement}
                 ${guidElement}
                 <pubDate>${pubDateString}</pubDate>
+                ${customFieldsXml ? customFieldsXml : ''}
             </item>`;
 }
 
@@ -333,12 +405,14 @@ function generateAtomEntryXml(itemData, feedMetadata) {
     const updatedElement = `<updated>${updatedString}</updated>`;
     const linkElement = link ? `<link href="${escapeXmlMinimal(link)}" rel="alternate" />` : '';
     const contentElement = `<content type="html"><![CDATA[${description}]]></content>`;
+    const customFieldsXml = generateCustomFieldsXml(itemData.customFields);
     return `<entry>
                 ${titleElement}
                 ${idElement}
                 ${updatedElement}
                 ${linkElement}
                 ${contentElement}
+                ${customFieldsXml ? customFieldsXml : ''}
             </entry>`;
 }
 

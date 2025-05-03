@@ -4,8 +4,6 @@ const { format, formatISO, parseISO  } = require('date-fns');
 // Define a fixed point in time for mocking 'now'
 const MOCK_NOW_TIMESTAMP = new Date('2025-04-03T10:30:00.000Z').getTime();
 const MOCK_NOW_DATE = new Date(MOCK_NOW_TIMESTAMP);
-// Calculate the expected RFC 822 string for the mocked 'now' time ONCE
-const MOCK_NOW_RFC822 = format(MOCK_NOW_DATE, "EEE, dd MMM yyyy HH:mm:ss 'GMT'", { timeZone: 'GMT' });
 
 // Mock Date constructor and Date.now() for consistent fallback dates
 beforeAll(() => {
@@ -32,15 +30,15 @@ const mockSheet2Values = [
     ['Title 2 (S2)', 'Desc B', 'https://example.com/2', '2025-04-01T08:00:00Z'], // Earliest
     ['Title 4 Latest (S2)', 'Desc D', 'https://example.com/4', '2025-04-03T10:00:00Z'], // Latest
 ];
-const mockSheet3ValuesManual = [ // Manual mode data
-    ['title', 'link', 'description', 'pubDate'], // Headers
-    ['Manual Title 1 (S3)', 'https://example.com/m1', 'Manual Desc 1', '2025-04-01T12:00:00Z'],
-    ['Manual Title 2 (S3)', 'https://example.com/m2', 'Manual Desc 2', '2025-04-02T12:00:00Z'], // Latest manual
+const mockSheetValuesManual = [
+    ['Title', 'URL', 'Summary', 'Published', 'Category', 'Author Name'], // Headers with aliases and custom
+    ['Manual Title 1', 'https://example.com/m1', 'Manual Desc 1', '2025-04-01T12:00:00Z', 'Tech', 'Alice'], // Earlier Date
+    ['Manual Title 2', 'https://example.com/m2', 'Manual Desc 2 & Special', '2025-04-02T12:00:00Z', 'News', 'Bob'], // Later Date
+    ['Manual Title 3 No Date', 'https://example.com/m3', 'Manual Desc 3', '', 'Tech', 'Charlie'], // No Date
 ];
-
 // Mock data structure as returned by the updated getSheetData
 const mockSingleSheetAutoData = { 'Sheet1': mockSheet1Values };
-const mockSingleSheetManualData = { 'Sheet3': mockSheet3ValuesManual }; // Use Sheet3 name for clarity
+const mockSingleSheetManualData = { 'Sheet3': mockSheetValuesManual }; // Use Sheet3 name for clarity
 const mockMultiSheetAutoData = {
     'Sheet1': mockSheet1Values,
     'Sheet2': mockSheet2Values
@@ -49,7 +47,7 @@ const mockMultiSheetAutoData = {
 const mockSheetValuesManualNoTitleValue = [
     ['Link', 'Description', 'Title', 'pubDate'], // Headers, title is 3rd column (index 2)
     ['https://example.com/item1', 'Desc 1', 'Valid Title 1', '2025-04-01T12:00:00Z'], // Valid item
-    ['https://example.com/item2', 'Desc 2', '', '2025-04-02T12:00:00Z'], // Item with empty title cell
+    ['https://example.com/item2', 'Desc 2', '', '2025-04-02T12:00:00Z'], // Item with empty title cell -> should become (Untitled)
     ['https://example.com/item3', 'Desc 3', 'Valid Title 3', '2025-04-03T12:00:00Z'] // Another valid item
 ];
 // Mock data for testing missing title HEADER in manual mode
@@ -106,25 +104,50 @@ describe('buildFeedData (Helper Function)', () => {
 
          it('should return the correct metadata structure', () => {
             expect(feedData.metadata.title).toBe(mockSheetTitle);
-            expect(feedData.metadata.description).toBe('Feed from Google Sheet (manual mode).');
-             expect(feedData.metadata.lastBuildDate.getTime()).toBe(parseISO('2025-04-02T12:00:00Z').getTime());
+            expect(feedData.metadata.description).toBe('Feed from Google Sheet (manual mode).'); // No sheet name here now
+            expect(feedData.metadata.lastBuildDate.getTime()).toBe(parseISO('2025-04-02T12:00:00Z').getTime());
         });
 
         it('should return the correct number of item objects', () => {
             expect(Array.isArray(items)).toBe(true);
-            expect(items.length).toBe(2);
+            expect(items.length).toBe(3); // Now includes item with no date
         });
 
         // Test name updated to reflect sorting
-        it('should map common headers to item properties (sorted)', () => {
-            expect(items[0].title).toBe('Manual Title 2 (S3)');
-            expect(items[0].link).toBe('https://example.com/m2');
-            expect(items[0].descriptionContent).toBe('Manual Desc 2');
-            expect(items[0].dateObject?.toISOString()).toBe('2025-04-02T12:00:00.000Z');
+        it('should map aliases and custom headers to item properties (sorted)', () => {
+            // Check sorting: Manual Title 2 (Apr 2nd) should be first
+            expect(items[0].title).toBe('Manual Title 2');
+            expect(items[0].link).toBe('https://example.com/m2'); // Mapped from 'URL' alias
+            expect(items[0].descriptionContent).toBe('Manual Desc 2 & Special'); // Mapped from 'Summary' alias
+            expect(items[0].dateObject?.toISOString()).toBe('2025-04-02T12:00:00.000Z'); // Mapped from 'Published' alias
+            expect(items[0].customFields).toBeDefined();
+            expect(items[0].customFields['Category']).toBe('News'); // Custom field 'Category'
+            expect(items[0].customFields['Author_Name']).toBe('Bob'); // Custom field 'Author Name' (sanitized)
 
             // Check second item
-            expect(items[1].title).toBe('Manual Title 1 (S3)');
+            expect(items[1].title).toBe('Manual Title 1');
             expect(items[1].dateObject?.toISOString()).toBe('2025-04-01T12:00:00.000Z');
+            expect(items[1].customFields).toBeDefined();
+            expect(items[1].customFields['Category']).toBe('Tech');
+            expect(items[1].customFields['Author_Name']).toBe('Alice');
+
+             // Check third item (no date, comes last)
+             expect(items[2].title).toBe('Manual Title 3 No Date');
+             expect(items[2].dateObject).toBeNull();
+             expect(items[2].customFields).toBeDefined();
+             expect(items[2].customFields['Category']).toBe('Tech');
+             expect(items[2].customFields['Author_Name']).toBe('Charlie');
+        });
+
+         it('should handle missing date in manual mode', () => {
+             // Use data that includes an item missing a date
+             const feedDataNoDate = buildFeedData({ 'SheetX': mockSheetValuesManual }, mode, mockSheetTitle, mockSheetID, mockRequestUrl);
+             // Find the specific item that should have a null date (it will be last after sorting)
+             const item3 = feedDataNoDate.items[2];
+             expect(item3.title).toBe('Manual Title 3 No Date');
+             expect(item3.link).toBe('https://example.com/m3');
+             expect(item3.descriptionContent).toBe('Manual Desc 3');
+             expect(item3.dateObject).toBeNull(); // Date string was empty
         });
 
         it('should use placeholder title if title value is missing in manual mode', () => {
@@ -134,11 +157,11 @@ describe('buildFeedData (Helper Function)', () => {
             expect(itemsNoTitleValue).toHaveLength(3);
             // Items should be sorted by date descending (Apr 3, Apr 2, Apr 1)
             expect(itemsNoTitleValue[0].title).toBe('Valid Title 3'); // Apr 3rd
-            expect(itemsNoTitleValue[1].title).toBe(''); // Apr 2nd (originally empty title)
+            expect(itemsNoTitleValue[1].title).toBe('(Untitled)'); // Apr 2nd (originally empty title)
             expect(itemsNoTitleValue[2].title).toBe('Valid Title 1'); // Apr 1st
 
             const itemWithPlaceholder = itemsNoTitleValue[1]; // Check the middle item
-            expect(itemWithPlaceholder.title).toBe('');
+            expect(itemWithPlaceholder.title).toBe('(Untitled)');
             expect(itemWithPlaceholder.link).toBe('https://example.com/item2');
             expect(itemWithPlaceholder.descriptionContent).toBe('Desc 2');
             expect(itemWithPlaceholder.dateObject?.toISOString()).toBe('2025-04-02T12:00:00.000Z');
@@ -150,21 +173,21 @@ describe('buildFeedData (Helper Function)', () => {
 
             expect(itemsNoTitleHeader).toHaveLength(2);
             // Items should be sorted by date descending (Apr 2nd, Apr 1st)
-            expect(itemsNoTitleHeader[0].title).toBe('');
+            expect(itemsNoTitleHeader[0].title).toBe('(Untitled)');
             expect(itemsNoTitleHeader[0].link).toBe('https://example.com/item2'); // Check other fields mapped
             expect(itemsNoTitleHeader[0].dateObject?.toISOString()).toBe('2025-04-02T12:00:00.000Z');
 
-            expect(itemsNoTitleHeader[1].title).toBe('');
+            expect(itemsNoTitleHeader[1].title).toBe('(Untitled)');
             expect(itemsNoTitleHeader[1].link).toBe('https://example.com/item1');
             expect(itemsNoTitleHeader[1].dateObject?.toISOString()).toBe('2025-04-01T12:00:00.000Z');
         });
 
         it('should skip rows where all cells are empty or whitespace in manual mode', () => {
              const feedDataEmptyRows = buildFeedData({ 'SheetX': mockSheetValuesManualEmptyRow }, mode, mockSheetTitle, mockSheetID, mockRequestUrl);
-             expect(feedDataEmptyRows.items).toHaveLength(4);
+             expect(feedDataEmptyRows.items).toHaveLength(2); // Only the two valid rows
              // Items should be sorted if manual sorting is enabled in helper
-             expect(feedDataEmptyRows.items[0].title).toBe('Valid Title 1'); // Assuming no date, original order kept
-             expect(feedDataEmptyRows.items[3].title).toBe('Valid Title 2');
+             expect(feedDataEmptyRows.items[0].title).toBe('Valid Title 1'); // No date, order might depend on stability
+             expect(feedDataEmptyRows.items[1].title).toBe('Valid Title 2'); // No date
         });
     });
 
