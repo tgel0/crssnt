@@ -261,7 +261,7 @@ function generateFeedManualModeInternal(values) {
     return items;
 }
 
-function buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl) {
+function buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl, itemLimit, charLimit) {
     let allItems = [];
     let sheetNames = Object.keys(sheetData);
 
@@ -274,9 +274,26 @@ function buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl) {
 
     sortFeedItems(allItems);
 
+    let itemCountLimited = false;
+    let itemCharLimited = false;
+    let limitedItems = allItems;
+
+    if (allItems.length > itemLimit) {
+        limitedItems = allItems.slice(0, itemLimit);
+        itemCountLimited = true;
+    }
+
+    limitedItems = limitedItems.map(item => {
+        if (item.descriptionContent && item.descriptionContent.length > charLimit) {
+            item.descriptionContent = item.descriptionContent.slice(0, charLimit) + '...';
+            itemCharLimited = true;
+        }
+        return item;
+    });
+
+    const latestItemDate = limitedItems.length > 0 && limitedItems[0].dateObject instanceof Date && isValid(limitedItems[0].dateObject)
+    ? limitedItems[0].dateObject : new Date();
     const feedDescription = `Feed from Google Sheet (${mode} mode).`;
-    const latestItemDate = allItems.length > 0 && allItems[0].dateObject instanceof Date && isValid(allItems[0].dateObject)
-                           ? allItems[0].dateObject : new Date();
 
     const feedData = {
         metadata: {
@@ -286,9 +303,11 @@ function buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl) {
             description: feedDescription,
             lastBuildDate: latestItemDate,
             generator: 'https://github.com/tgel0/crssnt',
-            id: `urn:google-sheet:${sheetID}` // Used for Atom <id>
+            id: `urn:google-sheet:${sheetID}`, // Used for Atom <id>
+            itemCountLimited: itemCountLimited,
+            itemCharLimited: itemCharLimited
         },
-        items: allItems
+        items: limitedItems
     };
     return feedData;
 }
@@ -362,15 +381,20 @@ function generateRssFeed(feedData) {
                           ? metadata.lastBuildDate
                           : new Date();
     const lastBuildDateString = format(lastBuildDate, "EEE, dd MMM yyyy HH:mm:ss 'GMT'", { timeZone: 'GMT' });
-
     const itemXmlStrings = items.map(item => generateRssItemXml(item)).join('');
+
+    let descriptionText = metadata.description || '';
+    if (metadata.itemCountLimited || metadata.itemCharLimited) {
+        descriptionText += ' [Feed truncated by limit]';
+    }
+
     const feedXml = `<?xml version="1.0" encoding="UTF-8"?>    
                     <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
                     <channel>
                         <title>${escapeXmlMinimal(metadata.title || 'Untitled Feed')}</title>
                         <link>${escapeXmlMinimal(metadata.link || '')}</link>
                         ${metadata.feedUrl ? `<atom:link href="${escapeXmlMinimal(metadata.feedUrl)}" rel="self" type="application/rss+xml" />` : ''}
-                        <description>${escapeXmlMinimal(metadata.description || '')}</description>
+                        <description>${escapeXmlMinimal(descriptionText || '')}</description>
                         <lastBuildDate>${lastBuildDateString}</lastBuildDate>
                         ${metadata.generator ? `<generator>${escapeXmlMinimal(metadata.generator)}</generator>` : ''}
                         ${itemXmlStrings}
@@ -430,10 +454,16 @@ function generateAtomFeed(feedData) {
    const feedId = metadata.id || metadata.feedUrl || metadata.link || `urn:uuid:${crypto.createHash('sha1').update(metadata.title || 'untitled').digest('hex')}`;
    const entryXmlStrings = items.map(item => generateAtomEntryXml(item, metadata)).join('');
 
+   let subtitleText = metadata.description || '';
+   if (metadata.itemCountLimited || metadata.itemCharLimited) {
+       subtitleText += ' [Feed truncated by limit]';
+   }
+   const subtitleElement = subtitleText ? `<subtitle>${escapeXmlMinimal(subtitleText)}</subtitle>` : '';
+
    const feedXml = `<?xml version="1.0" encoding="utf-8"?>
                     <feed xmlns="http://www.w3.org/2005/Atom">
                     <title>${escapeXmlMinimal(metadata.title || 'Untitled Feed')}</title>
-                    ${metadata.description ? `<subtitle>${escapeXmlMinimal(metadata.description)}</subtitle>` : ''}
+                    ${subtitleElement}
                     <link href="${escapeXmlMinimal(metadata.feedUrl || '')}" rel="self" type="application/atom+xml"/>
                     <link href="${escapeXmlMinimal(metadata.link || '')}" rel="alternate"/>
                     <id>${escapeXmlMinimal(feedId)}</id>

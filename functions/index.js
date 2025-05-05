@@ -10,7 +10,7 @@ const BLOCKED_SHEET_IDS_STRING = process.env.BLOCKED_SHEET_IDS || "";
 const BLOCKED_SHEET_IDS = new Set(BLOCKED_SHEET_IDS_STRING.split(',').map(id => id.trim()).filter(id => id));
 initializeApp();
 
-async function handleSheetRequest(request, response, outputFormat = 'rss') {
+async function handleSheetRequest(request, response, outputFormat = 'rss', itemLimit = 50, charLimit = 500) {
 
   const pathParts = request.path.split("/");
   const sheetIDfromURL = pathParts.length > 6 ? pathParts[6] : undefined;
@@ -44,7 +44,7 @@ async function handleSheetRequest(request, response, outputFormat = 'rss') {
     const pathAndQuery = request.originalUrl || request.url;
     const requestUrl = `${baseUrl}${pathAndQuery}`;
 
-    const feedData = feedUtils.buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl);
+    const feedData = feedUtils.buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl, itemLimit, charLimit);
 
     let feedOutput = '';
     let contentType = '';
@@ -87,16 +87,16 @@ async function handleSheetRequest(request, response, outputFormat = 'rss') {
 
 
 exports.previewFunctionV2 = onRequest(
-  { cors: true, secrets: ["SHEETS_API_KEY"], cpu: 0.2 },
-  (request, response) => handleSheetRequest(request, response, 'rss')
+  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.1 },
+  (request, response) => handleSheetRequest(request, response, 'rss', 30, 250)
 );
 
 exports.sheetToRSS = onRequest(
-  { cors: true, secrets: ["SHEETS_API_KEY"], cpu: 0.1 },
-  (request, response) => handleSheetRequest(request, response, 'rss')
+  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.1 },
+  (request, response) => handleSheetRequest(request, response, 'rss', 50, 500)
 );
 
 exports.sheetToAtom = onRequest(
-  { cors: true, secrets: ["SHEETS_API_KEY"], cpu: 0.1 },
-  (request, response) => handleSheetRequest(request, response, 'atom')
+  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.1 },
+  (request, response) => handleSheetRequest(request, response, 'atom', 50, 500)
 );
