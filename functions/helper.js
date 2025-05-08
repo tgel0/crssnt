@@ -4,7 +4,7 @@ const sheets = google.sheets('v4');
 const { parseISO, isValid, format, formatISO } = require('date-fns');
 
 
-// --- XML Escaping ---
+// --- XML/Markdown Escaping ---
 
 function escapeXmlMinimal(unsafe) {
     if (typeof unsafe !== 'string') {
@@ -20,6 +20,15 @@ function escapeXmlMinimal(unsafe) {
       }
     });
   }
+
+function escapeMarkdown(unsafe) {
+    if (typeof unsafe !== 'string') return '';
+    return unsafe
+        .replace(/([\\`*_{}[\]()#+.!-])/g, '\\$1') // Escape markdown syntax characters
+        .replace(/&/g, '&amp;') // Escape HTML entities that might still be interpreted
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
   
 
 // --- Date Handling ---
@@ -525,10 +534,135 @@ function generateBlockedFeedPlaceholder(sheetID, outputFormat, feedBaseUrl) {
 }
 
 
+function generateJsonFeedObject(feedData) {
+    if (!feedData || !feedData.metadata || !Array.isArray(feedData.items)) {
+        console.error("Invalid feedData passed to generateJsonFeedObject");
+        // Return minimal error representation
+        return {
+            version: "https://jsonfeed.org/version/1.1",
+            title: "Error Generating Feed",
+            description: "Could not generate feed due to invalid data.",
+            items: []
+        };
+    }
+    const { metadata, items } = feedData;
+
+    // Add truncation notice to description
+    let descriptionText = metadata.description || '';
+    if (metadata.itemCountLimited || metadata.itemCharLimited) {
+        descriptionText += ' Note: This feed may be incomplete due to configured limits.';
+    }
+
+    const jsonFeed = {
+        version: "https://jsonfeed.org/version/1.1",
+        title: metadata.title || 'Untitled Feed',
+        home_page_url: metadata.link, // Link to the sheet
+        feed_url: metadata.feedUrl, // Self URL
+        description: descriptionText,
+        // Add authors if available in metadata later
+        // authors: metadata.author ? [{ name: metadata.author.name, url: metadata.author.link, avatar: metadata.author.image }] : undefined,
+        items: items.map(item => {
+            const itemDate = (item.dateObject instanceof Date && isValid(item.dateObject))
+                             ? item.dateObject : new Date();
+            // Generate ID: prefer link, fallback to hash-based GUID logic
+            let itemId;
+            if (item.link && item.link.startsWith('http')) {
+                itemId = item.link;
+            } else {
+                const stringToHash = `${item.title || ''}::${item.descriptionContent || ''}::${formatISO(itemDate)}`;
+                itemId = `${metadata.id || 'urn:uuid:temp'}:${crypto.createHash('sha1').update(stringToHash).digest('hex')}`;
+            }
+
+            const jsonItem = {
+                id: itemId,
+                url: item.link, // External URL of the item
+                title: item.title,
+                content_html: item.descriptionContent, // Assuming description might contain HTML
+                date_published: formatISO(itemDate), // RFC 3339 / ISO 8601
+                // date_modified: formatISO(itemDate), // Can be same as published
+                // Add authors, tags, attachments etc. if available later
+            };
+            // Add custom fields under a namespaced key
+            if (item.customFields) {
+                jsonItem._crssnt_custom_fields = item.customFields;
+            }
+            // Clean up undefined fields
+            Object.keys(jsonItem).forEach(key => jsonItem[key] === undefined && delete jsonItem[key]);
+            return jsonItem;
+        })
+    };
+
+    // Clean up undefined top-level fields
+    Object.keys(jsonFeed).forEach(key => jsonFeed[key] === undefined && delete jsonFeed[key]);
+
+    return jsonFeed;
+}
+
+
+function generateMarkdown(feedData) {
+    if (!feedData || !feedData.metadata || !Array.isArray(feedData.items)) {
+       console.error("Invalid feedData passed to generateMarkdown");
+       return "# Error Generating Feed\n\nCould not generate feed due to invalid data.";
+   }
+   const { metadata, items } = feedData;
+   let md = '';
+
+   // Header
+   md += `# ${escapeMarkdown(metadata.title || 'Untitled Feed')}\n\n`;
+   if (metadata.link) {
+       md += `**Source:** [${escapeMarkdown(metadata.link)}](${escapeMarkdown(metadata.link)})\n`;
+   }
+   if (metadata.feedUrl) {
+        md += `**Feed URL:** [${escapeMarkdown(metadata.feedUrl)}](${escapeMarkdown(metadata.feedUrl)})\n`;
+   }
+   if (metadata.description) {
+       md += `\n*${escapeMarkdown(metadata.description)}*\n`;
+   }
+   // Add truncation notice
+   if (metadata.itemCountLimited || metadata.itemCharLimited) {
+       md += `\n**Note: This feed may be incomplete due to configured limits.**\n`;
+   }
+   md += `\n---\n\n`; // Separator
+
+   // Items
+   if (items.length === 0) {
+       md += "_No items found._\n";
+   } else {
+       items.forEach(item => {
+           md += `## ${escapeMarkdown(item.title || '(Untitled)')}\n\n`;
+           if (item.dateObject instanceof Date && isValid(item.dateObject)) {
+               // Format date nicely for display
+               md += `*Published: ${format(item.dateObject, 'PPPppp', { timeZone: 'GMT' })} (GMT)*\n`;
+           }
+           if (item.link) {
+               md += `**Link:** [${escapeMarkdown(item.link)}](${escapeMarkdown(item.link)})\n`;
+           }
+           md += `\n${item.descriptionContent || ''}\n\n`; // Assume description is plain text or already formatted Markdown
+
+           // Add custom fields if present
+           if (item.customFields) {
+               md += `**Custom Fields:**\n`;
+               for (const key in item.customFields) {
+                   md += `* ${escapeMarkdown(key)}: ${escapeMarkdown(item.customFields[key])}\n`;
+               }
+               md += `\n`;
+           }
+
+           md += `\n---\n\n`;
+       });
+   }
+
+   return md;
+}
+
+
 module.exports = {
     getSheetData,
     buildFeedData,
     generateRssFeed,
     generateAtomFeed,
-    generateBlockedFeedPlaceholder
+    generateJsonFeedObject,
+    generateMarkdown,    
+    generateBlockedFeedPlaceholder,
+    escapeMarkdown // Needed for testing
 };

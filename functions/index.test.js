@@ -1,4 +1,4 @@
-const { buildFeedData, generateRssFeed, generateAtomFeed } = require('./helper');
+const { buildFeedData, generateRssFeed, generateAtomFeed, generateJsonFeedObject, generateMarkdown, escapeMarkdown } = require('./helper');
 const { format, formatISO, parseISO  } = require('date-fns');
 
 // Define a fixed point in time for mocking 'now'
@@ -269,5 +269,138 @@ describe('generateAtomFeed (Helper Function with Aggregated Data)', () => {
         expect(resultXml).toContain(`<id>${expectedId}</id>`);
         expect(resultXml).toContain(`<updated>${expectedDate}</updated>`);
         expect(resultXml).toContain('</entry>');
+    });
+});
+
+describe('generateJsonFeedObject (Helper Function)', () => {
+    const mode = 'auto';
+    // Use aggregated data for general structure
+    const feedDataAggregated = buildFeedData(mockMultiSheetAutoData, mode, mockSheetTitle, mockSheetID, mockRequestUrl);
+    const resultJson = generateJsonFeedObject(feedDataAggregated);
+
+    it('should contain correct top-level feed properties for aggregated data', () => {
+        expect(resultJson.version).toBe('https://jsonfeed.org/version/1.1');
+        expect(resultJson.title).toBe(mockSheetTitle); // XML escaping not relevant for JSON values
+        expect(resultJson.home_page_url).toBe(`https://docs.google.com/spreadsheets/d/${mockSheetID}`);
+        expect(resultJson.feed_url).toBe(mockRequestUrl);
+        expect(resultJson.description).toBe('Feed from Google Sheet (auto mode).');
+    });
+
+    it('should contain the correct total number of items', () => {
+        expect(Array.isArray(resultJson.items)).toBe(true);
+        expect(resultJson.items.length).toBe(4); // Combined items
+    });
+
+    it('should contain correct properties for the latest item', () => {
+        const firstItem = feedDataAggregated.items[0]; // Title 4 Latest (S2)
+        const jsonItem = resultJson.items[0];
+
+        expect(jsonItem.id).toBe(firstItem.link); // Link is used as ID
+        expect(jsonItem.url).toBe(firstItem.link);
+        expect(jsonItem.title).toBe(firstItem.title);
+        expect(jsonItem.content_html).toBe(firstItem.descriptionContent);
+        expect(jsonItem.date_published).toBe(formatISO(firstItem.dateObject));
+    });
+
+    it('should handle items with no link (generate hashed ID)', () => {
+        // Find "Title 3 No Date (S1)" which has no link and no original date
+        const itemNoLinkNoDate = feedDataAggregated.items.find(item => item.title === 'Title 3 No Date (S1)');
+        const jsonItem = resultJson.items.find(jItem => jItem.title === 'Title 3 No Date (S1)');
+
+        expect(jsonItem).toBeDefined();
+        expect(itemNoLinkNoDate).toBeDefined();
+        expect(jsonItem.url).toBeUndefined(); // No link, so no 'url'
+        expect(jsonItem.title).toBe('Title 3 No Date (S1)');
+        expect(jsonItem.content_html).toBe('Desc C');
+        expect(jsonItem.id).toMatch(/^urn:google-sheet:TEST_SHEET_ID_123:[a-f0-9]{40}$/);
+    });
+
+    it('should include custom fields under _crssnt_custom_fields for manual mode', () => {
+        const manualFeedData = buildFeedData(mockSingleSheetManualData, 'manual', 'Manual Sheet', 'MANUAL_ID', 'https://crssnt.com/manual');
+        const manualJson = generateJsonFeedObject(manualFeedData);
+        // Find "Manual Title 2" which has custom fields
+        const itemWithCustom = manualJson.items.find(item => item.title === 'Manual Title 2');
+        expect(itemWithCustom).toBeDefined();
+        expect(itemWithCustom._crssnt_custom_fields).toBeDefined();
+        expect(itemWithCustom._crssnt_custom_fields.Category).toBe('News');
+        expect(itemWithCustom._crssnt_custom_fields.Author_Name).toBe('Bob'); // Sanitized from 'Author Name'
+    });
+
+    it('should include truncation notice in description if items are limited', () => {
+        const limitedFeedData = buildFeedData(mockMultiSheetAutoData, 'auto', mockSheetTitle, mockSheetID, mockRequestUrl, 1, 500); // Limit to 1 item
+        const limitedJson = generateJsonFeedObject(limitedFeedData);
+        expect(limitedJson.description).toContain('Note: This feed may be incomplete due to configured limits.');
+    });
+});
+
+describe('generateMarkdown (Helper Function)', () => {
+    const mode = 'auto';
+    const feedDataAggregated = buildFeedData(mockMultiSheetAutoData, mode, mockSheetTitle, mockSheetID, mockRequestUrl);
+    const resultMd = generateMarkdown(feedDataAggregated);
+
+
+    it('should contain the correct total number of items (indicated by separators)', () => {
+        // Each item is followed by "\n---\n\n", plus one initial "---" after header
+        const separatorCount = (resultMd.match(/\n---\n\n/g) || []).length;
+        expect(separatorCount).toBe(feedDataAggregated.items.length + 1); // +1 for header separator
+    });
+
+    it('should contain correct content for the latest item', () => {
+        const firstItem = feedDataAggregated.items[0]; // Title 4 Latest (S2)
+        const expectedPublishedDate = format(firstItem.dateObject, 'PPPppp', { timeZone: 'GMT' });
+
+        expect(resultMd).toContain(`## ${escapeMarkdown(firstItem.title)}`);
+        expect(resultMd).toContain(`*Published: ${expectedPublishedDate} (GMT)*`);
+        expect(resultMd).toContain(firstItem.descriptionContent);
+    });
+
+    it('should handle items with no link and no date correctly', () => {
+        // "Title 3 No Date (S1)"
+        const itemNoLinkNoDate = feedDataAggregated.items.find(item => item.title === 'Title 3 No Date (S1)');
+        const expectedMarkdownTitle = escapeMarkdown(itemNoLinkNoDate.title);
+        expect(resultMd).toContain(`## ${expectedMarkdownTitle}`);
+        // Should not contain "Published:" line as dateObject is null
+        expect(resultMd).not.toContain(`## ${expectedMarkdownTitle}\n\n*Published:`);
+        // Should not contain "**Link:**" line as link is undefined
+        const regexEscapedMarkdownTitle = expectedMarkdownTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const itemSectionRegex = new RegExp(`## ${regexEscapedMarkdownTitle}[\\s\\S]*?---`);
+        const itemSectionMatch = resultMd.match(itemSectionRegex);
+        expect(itemSectionMatch).toBeTruthy();
+        expect(itemSectionMatch[0]).not.toContain("**Link:**");
+        expect(resultMd).toContain(itemNoLinkNoDate.descriptionContent);
+    });
+
+    it('should include custom fields correctly for manual mode', () => {
+        const manualFeedData = buildFeedData(mockSingleSheetManualData, 'manual', 'Manual Sheet', 'MANUAL_ID', 'https://crssnt.com/manual');
+        const manualMd = generateMarkdown(manualFeedData);
+
+        // Check for "Manual Title 2" which has custom fields
+        const itemTitle2 = 'Manual Title 2';
+        const escapedItemTitle2 = escapeMarkdown(itemTitle2); // Ensure title used in regex is escaped
+        const regexEscapedItemTitle2 = escapedItemTitle2.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const item2SectionRegex = new RegExp(`## ${regexEscapedItemTitle2}[\\s\\S]*?---`);
+        const item2SectionMatch = manualMd.match(item2SectionRegex);
+        expect(item2SectionMatch).toBeTruthy();
+        const item2Md = item2SectionMatch[0];
+
+        expect(item2Md).toContain(`**Custom Fields:**`); // This part is fine
+        expect(item2Md).toContain(`* ${escapeMarkdown('Category')}: ${escapeMarkdown('News')}`);
+        expect(item2Md).toContain(`* ${escapeMarkdown('Author_Name')}: ${escapeMarkdown('Bob')}`);
+    });
+
+    it('should include truncation notice if items are limited', () => {
+        const limitedFeedData = buildFeedData(mockMultiSheetAutoData, 'auto', mockSheetTitle, mockSheetID, mockRequestUrl, 1, 500); // Limit to 1 item
+        const limitedMd = generateMarkdown(limitedFeedData);
+        expect(limitedMd).toContain(`**Note: This feed may be incomplete due to configured limits.**`);
+    });
+
+    it('should handle empty items list gracefully', () => {
+        const emptyFeedData = {
+            metadata: { title: 'Empty Feed', link: 'http://example.com', feedUrl: 'http://example.com/feed', description: 'An empty feed.' , lastBuildDate: MOCK_NOW_DATE, id:'urn:empty'},
+            items: []
+        };
+        const md = generateMarkdown(emptyFeedData);
+        expect(md).toContain("# Empty Feed");
+        expect(md).toContain("_No items found._");
     });
 });
