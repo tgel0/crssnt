@@ -29,9 +29,7 @@ async function handleSheetRequest(request, response, outputFormat = 'rss', itemL
     return response.status(400).send('Sheet ID not provided in query (?id=) or path.');
   }
 
-    // *** Blocklist Check ***
     if (BLOCKED_SHEET_IDS.has(sheetID)) {
-      console.log(`Sheet ID ${sheetID} is on the blocklist. Returning placeholder feed.`);
       const { feedXml, contentType, statusCode } = feedUtils.generateBlockedFeedPlaceholder(sheetID, outputFormat, baseUrl);
       response.set('Cache-Control', 'public, max-age=3600, s-maxage=3600'); // Cache placeholder longer
       return response.status(statusCode).contentType(contentType).send(feedXml);
@@ -54,8 +52,8 @@ async function handleSheetRequest(request, response, outputFormat = 'rss', itemL
         contentType = 'application/atom+xml; charset=utf8';
     } else if (outputFormat === 'json') {
         const jsonObject = feedUtils.generateJsonFeedObject(feedData);
-        feedOutput = JSON.stringify(jsonObject, null, 2); // Pretty-print JSON
-        contentType = 'application/feed+json; charset=utf8'; // Recommended JSON Feed type
+        feedOutput = JSON.stringify(jsonObject, null, 2);
+        contentType = 'application/feed+json; charset=utf8';
     } else if (outputFormat === 'markdown') {
         feedOutput = feedUtils.generateMarkdown(feedData);
         contentType = 'text/markdown; charset=utf8';
@@ -93,6 +91,61 @@ async function handleSheetRequest(request, response, outputFormat = 'rss', itemL
 }
 
 
+async function handleUrlRequest(request, response, outputFormat, itemLimit = 50, charLimit = 500) {
+  const sourceUrl = request.query.url;
+
+  if (!sourceUrl) {
+      return response.status(400).send('Source URL not provided. Use query parameter "?url=FEED_URL".');
+  }
+
+  try {
+      new URL(sourceUrl);
+  } catch (e) {
+      return response.status(400).send('Invalid source URL format.');
+  }
+
+  try {
+      const xmlString = await feedUtils.fetchUrlContent(sourceUrl);
+      const $ = feedUtils.parseXmlFeedWithCheerio(xmlString);
+      const feedData = feedUtils.normalizeParsedFeed($, sourceUrl, itemLimit, charLimit);
+
+      let feedOutput = '';
+      let contentType = '';
+
+      if (outputFormat === 'json') {
+          const jsonObject = feedUtils.generateJsonFeedObject(feedData);
+          feedOutput = JSON.stringify(jsonObject, null, 2);
+          contentType = 'application/feed+json; charset=utf8';
+      } else if (outputFormat === 'markdown') {
+          feedOutput = feedUtils.generateMarkdown(feedData);
+          contentType = 'text/markdown; charset=utf8';
+      } else {
+          // Should not happen for these new endpoints, but as a fallback:
+          console.warn(`Unsupported output format '${outputFormat}' requested for URL feed. Defaulting to JSON.`);
+          const jsonObject = feedUtils.generateJsonFeedObject(feedData);
+          feedOutput = JSON.stringify(jsonObject, null, 2);
+          contentType = 'application/feed+json; charset=utf8';
+      }
+
+      response.set('Cache-Control', 'public, max-age=300, s-maxage=300'); // Cache fetched feeds
+      return response.status(200).contentType(contentType).send(feedOutput);
+
+  } catch (err) {
+      console.error(`Error processing URL ${sourceUrl} for ${outputFormat}:`, err);
+      let statusCode = 500;
+      let message = 'Something went wrong processing the external feed.';
+      if (err.message.includes('Failed to fetch') || err.message.includes('invalid URL')) {
+          statusCode = 400;
+          message = `Could not fetch or invalid source URL: ${sourceUrl}. Details: ${err.message}`;
+      } else if (err.message.includes('Unknown feed type')) {
+          statusCode = 400;
+          message = `Could not determine feed type (RSS or Atom) for URL: ${sourceUrl}.`;
+      }
+      return response.status(statusCode).send(message);
+  }
+}
+
+
 exports.previewFunctionV2 = onRequest(
   { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.1 },
   (request, response) => handleSheetRequest(request, response, 'rss', 30, 250)
@@ -116,4 +169,14 @@ exports.sheetToJson = onRequest(
 exports.sheetToMarkdown = onRequest(
   { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.1 },
   (request, response) => handleSheetRequest(request, response, 'markdown', 50, 500)
+);
+
+exports.feedToJson = onRequest(
+  { cors: true, cpu: 0.1 },
+  (request, response) => handleUrlRequest(request, response, 'json', 50, 500)
+);
+
+exports.feedToMarkdown = onRequest(
+  { cors: true, cpu: 0.1 },
+  (request, response) => handleUrlRequest(request, response, 'markdown', 50, 500)
 );

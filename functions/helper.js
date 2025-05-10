@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { google } = require('googleapis');
 const sheets = google.sheets('v4');
 const { parseISO, isValid, format, formatISO } = require('date-fns');
+const cheerio = require('cheerio'); // For parsing external XML feeds
 
 
 // --- XML/Markdown Escaping ---
@@ -321,6 +322,155 @@ function buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl, itemLim
     return feedData;
 }
 
+// --- External Feed Fetching & Parsing ---
+
+async function fetchUrlContent(url) {
+    try {
+        const response = await fetch(url, { headers: { 'User-Agent': 'crssnt-feed-generator/1.0' }}); // Add User-Agent
+        if (!response.ok) {
+            throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+        }
+        const textContent = await response.text();
+        return textContent;
+    } catch (error) {
+        console.error(`fetchUrlContent: Error fetching ${url}:`, error);
+        throw error; // Re-throw to be caught by endpoint handler
+    }
+}
+
+function parseXmlFeedWithCheerio(xmlString) {
+    return cheerio.load(xmlString, {
+        xmlMode: true, // Important for XML parsing
+        decodeEntities: true // Handle entities like &amp;
+    });
+}
+
+function normalizeParsedFeed($, sourceUrl, itemLimit = Infinity, charLimit = Infinity) {
+    const items = [];
+    let feedTitle = '';
+    let feedLink = ''; // Home page URL of the feed
+    let feedDescription = '';
+    let feedLastBuildDate = null;
+    let feedLanguage = 'en'; // Default
+    let feedGenerator = 'crssnt (converted)';
+    let feedId = sourceUrl; // Default feed ID to its own URL
+
+    const _stripCdataWrapper = (str) => {
+        if (typeof str === 'string' && str.startsWith('<![CDATA[') && str.endsWith(']]>')) {
+            return str.substring(9, str.length - 3);
+        }
+        return str;
+    };
+
+    const isRss = $('rss').length > 0;
+    const isAtom = !isRss && $('feed').length > 0;
+
+    if (isRss) {
+        const channel = $('rss > channel').first();
+        feedTitle = channel.find('> title').first().text().trim();
+        feedLink = channel.find('> link').first().text().trim();
+        feedDescription = channel.find('> description').first().text().trim();
+        feedLanguage = channel.find('> language').first().text().trim() || 'en';
+        feedGenerator = channel.find('> generator').first().text().trim() || feedGenerator;
+        const lastBuildDateStr = channel.find('> lastBuildDate').first().text().trim();
+        if (lastBuildDateStr) feedLastBuildDate = parseDateString(lastBuildDateStr);
+        // For RSS, self link might be in atom:link
+        const atomLinkSelf = channel.find('atom\\:link[rel="self"]').attr('href');
+        feedId = atomLinkSelf || feedLink || sourceUrl;
+
+
+        channel.find('item').each((i, el) => {
+            const $item = $(el);
+            const title = $item.find('> title').text().trim() || '(Untitled)';
+            const link = $item.find('> link').text().trim() || $item.find('guid[isPermaLink="true"]').text().trim() || undefined;
+            const rawDescription = $item.find('> description').html() || $item.find('content\\:encoded').html() || ''; // Prefer encoded if available
+            const descriptionContent = _stripCdataWrapper(rawDescription);
+            const pubDateStr = $item.find('> pubDate').text().trim();
+            const dateObject = parseDateString(pubDateStr);
+            const guid = $item.find('> guid').text().trim() || link; // Use link as fallback for ID
+
+            items.push({ title, link, dateObject, descriptionContent, id: guid });
+        });
+    } else if (isAtom) {
+        const feed = $('feed').first();
+        feedTitle = feed.find('> title').first().text().trim();
+        feedLink = feed.find('> link[rel="alternate"]').first().attr('href') || feed.find('> link').first().attr('href');
+        feedDescription = feed.find('> subtitle').first().text().trim();
+        feedId = feed.find('> id').first().text().trim() || sourceUrl;
+        const updatedStr = feed.find('> updated').first().text().trim();
+        if (updatedStr) feedLastBuildDate = parseDateString(updatedStr);
+        // Atom language can be on <feed xml:lang="en">
+        feedLanguage = feed.attr('xml:lang') || feed.find('> language').text().trim() || 'en';
+        const generatorNode = feed.find('generator').first();
+        feedGenerator = generatorNode.text().trim() || feedGenerator;
+        if (generatorNode.attr('uri')) feedGenerator += ` (${generatorNode.attr('uri')})`;
+
+
+        feed.find('entry').each((i, el) => {
+            const $entry = $(el);
+            const title = $entry.find('> title').text().trim() || '(Untitled)';
+            const link = $entry.find('> link[rel="alternate"]').attr('href') || $entry.find('> link').first().attr('href');
+            const rawDescription = $entry.find('> content').html() || $entry.find('> summary').html() || '';
+            const descriptionContent = _stripCdataWrapper(rawDescription);
+            const updatedStr = $entry.find('> updated').text().trim() || $entry.find('> published').text().trim();
+            const dateObject = parseDateString(updatedStr);
+            const id = $entry.find('> id').text().trim() || link;
+
+            items.push({ title, link, dateObject, descriptionContent, id });
+        });
+    } else {
+        console.warn(`normalizeParsedFeed: Unknown feed type for ${sourceUrl}`);
+        // Could attempt to create a basic feedData object if desired
+        feedTitle = "Unknown Feed Type";
+        feedDescription = `Could not determine feed type for URL: ${sourceUrl}`;
+    }
+
+    // Sort all extracted items
+    sortFeedItems(items);
+
+    // Apply limits
+    let itemCountLimited = false;
+    let itemCharLimited = false;
+    let limitedItems = items;
+
+    if (itemLimit !== Infinity && items.length > itemLimit) {
+        limitedItems = items.slice(0, itemLimit);
+        itemCountLimited = true;
+    }
+    if (charLimit !== Infinity) {
+        limitedItems = limitedItems.map(item => {
+            if (item.descriptionContent && item.descriptionContent.length > charLimit) {
+                item.descriptionContent = item.descriptionContent.slice(0, charLimit) + '...';
+                itemCharLimited = true;
+            }
+            return item;
+        });
+    }
+
+    const latestItemDate = limitedItems.length > 0 && limitedItems[0].dateObject instanceof Date && isValid(limitedItems[0].dateObject)
+                           ? limitedItems[0].dateObject
+                           : (feedLastBuildDate || new Date());
+
+    return {
+        metadata: {
+            title: feedTitle || 'Untitled Parsed Feed',
+            link: feedLink || sourceUrl, // Link to original site
+            feedUrl: sourceUrl,        // The URL of the feed itself
+            description: feedDescription,
+            lastBuildDate: latestItemDate,
+            language: feedLanguage,
+            generator: feedGenerator,
+            id: feedId, // Unique ID for the feed
+            itemCountLimited,
+            itemCharLimited
+        },
+        items: limitedItems
+    };
+}
+
+
+// --- Feed Output Generation ---
+
 function generateCustomFieldsXml(customFields) {
     if (!customFields || typeof customFields !== 'object') {
         return '';
@@ -484,55 +634,6 @@ function generateAtomFeed(feedData) {
    return feedXml;
 }
 
-function generateBlockedFeedPlaceholder(sheetID, outputFormat, feedBaseUrl) {
-    const statusCode = 410; // Gone
-    let placeholderFeed = '';
-    let contentType = '';
-    const placeholderTitle = "Feed Unavailable";
-    const placeholderDesc = `The requested Google Sheet (ID: ${sheetID}) is currently unavailable or has been blocked by the administrator.`;
-    const placeholderLink = 'https://crssnt.com/';
-
-    if (outputFormat === 'atom') {
-        contentType = 'application/atom+xml; charset=utf8';
-        const updated = formatISO(new Date());
-        const feedId = `urn:crssnt:blocked:${sheetID}`;
-        placeholderFeed = `<?xml version="1.0" encoding="utf-8"?>
-                            <feed xmlns="http://www.w3.org/2005/Atom">
-                            <title>${escapeXmlMinimal(placeholderTitle)}</title>
-                            <link href="${escapeXmlMinimal(placeholderLink)}" rel="alternate"/>
-                            <id>${escapeXmlMinimal(feedId)}</id>
-                            <updated>${updated}</updated>
-                            <subtitle>${escapeXmlMinimal(placeholderDesc)}</subtitle>
-                            <entry>
-                                <title>Sheet Unavailable</title>
-                                <id>${escapeXmlMinimal(feedId)}:entry:${Date.now()}</id>
-                                <updated>${updated}</updated>
-                                <content type="text">${escapeXmlMinimal(placeholderDesc)}</content>
-                            </entry>
-                            </feed>`;
-    } else { // Default to RSS
-        contentType = 'application/rss+xml; charset=utf8';
-        const pubDate = format(new Date(), "EEE, dd MMM yyyy HH:mm:ss 'GMT'", { timeZone: 'GMT' });
-        placeholderFeed = `<?xml version="1.0" encoding="UTF-8"?>
-                            <rss version="2.0">
-                            <channel>
-                            <title>${escapeXmlMinimal(placeholderTitle)}</title>
-                            <link>${escapeXmlMinimal(placeholderLink)}</link>
-                            <description>${escapeXmlMinimal(placeholderDesc)}</description>
-                            <lastBuildDate>${pubDate}</lastBuildDate>
-                            <item>
-                                <title>Sheet Unavailable</title>
-                                <description>${escapeXmlMinimal(placeholderDesc)}</description>
-                                <pubDate>${pubDate}</pubDate>
-                                <guid isPermaLink="false">unavailable-${escapeXmlMinimal(sheetID)}-${Date.now()}</guid>
-                            </item>
-                            </channel>
-                            </rss>`;
-    }
-
-    return { feedXml: placeholderFeed, contentType, statusCode };
-}
-
 
 function generateJsonFeedObject(feedData) {
     if (!feedData || !feedData.metadata || !Array.isArray(feedData.items)) {
@@ -655,10 +756,62 @@ function generateMarkdown(feedData) {
    return md;
 }
 
+function generateBlockedFeedPlaceholder(sheetID, outputFormat, feedBaseUrl) {
+    const statusCode = 410; // Gone
+    let placeholderFeed = '';
+    let contentType = '';
+    const placeholderTitle = "Feed Unavailable";
+    const placeholderDesc = `The requested Google Sheet (ID: ${sheetID}) is currently unavailable or has been blocked by the administrator.`;
+    const placeholderLink = 'https://crssnt.com/';
+
+    if (outputFormat === 'atom') {
+        contentType = 'application/atom+xml; charset=utf8';
+        const updated = formatISO(new Date());
+        const feedId = `urn:crssnt:blocked:${sheetID}`;
+        placeholderFeed = `<?xml version="1.0" encoding="utf-8"?>
+                            <feed xmlns="http://www.w3.org/2005/Atom">
+                            <title>${escapeXmlMinimal(placeholderTitle)}</title>
+                            <link href="${escapeXmlMinimal(placeholderLink)}" rel="alternate"/>
+                            <id>${escapeXmlMinimal(feedId)}</id>
+                            <updated>${updated}</updated>
+                            <subtitle>${escapeXmlMinimal(placeholderDesc)}</subtitle>
+                            <entry>
+                                <title>Sheet Unavailable</title>
+                                <id>${escapeXmlMinimal(feedId)}:entry:${Date.now()}</id>
+                                <updated>${updated}</updated>
+                                <content type="text">${escapeXmlMinimal(placeholderDesc)}</content>
+                            </entry>
+                            </feed>`;
+    } else { // Default to RSS
+        contentType = 'application/rss+xml; charset=utf8';
+        const pubDate = format(new Date(), "EEE, dd MMM yyyy HH:mm:ss 'GMT'", { timeZone: 'GMT' });
+        placeholderFeed = `<?xml version="1.0" encoding="UTF-8"?>
+                            <rss version="2.0">
+                            <channel>
+                            <title>${escapeXmlMinimal(placeholderTitle)}</title>
+                            <link>${escapeXmlMinimal(placeholderLink)}</link>
+                            <description>${escapeXmlMinimal(placeholderDesc)}</description>
+                            <lastBuildDate>${pubDate}</lastBuildDate>
+                            <item>
+                                <title>Sheet Unavailable</title>
+                                <description>${escapeXmlMinimal(placeholderDesc)}</description>
+                                <pubDate>${pubDate}</pubDate>
+                                <guid isPermaLink="false">unavailable-${escapeXmlMinimal(sheetID)}-${Date.now()}</guid>
+                            </item>
+                            </channel>
+                            </rss>`;
+    }
+
+    return { feedXml: placeholderFeed, contentType, statusCode };
+}
+
 
 module.exports = {
     getSheetData,
     buildFeedData,
+    fetchUrlContent,
+    parseXmlFeedWithCheerio,
+    normalizeParsedFeed,
     generateRssFeed,
     generateAtomFeed,
     generateJsonFeedObject,

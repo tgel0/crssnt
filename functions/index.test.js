@@ -1,4 +1,4 @@
-const { buildFeedData, generateRssFeed, generateAtomFeed, generateJsonFeedObject, generateMarkdown, escapeMarkdown } = require('./helper');
+const { buildFeedData, generateRssFeed, generateAtomFeed, generateJsonFeedObject, generateMarkdown, escapeMarkdown, fetchUrlContent, parseXmlFeedWithCheerio, normalizeParsedFeed } = require('./helper');
 const { format, formatISO, parseISO  } = require('date-fns');
 
 // Define a fixed point in time for mocking 'now'
@@ -402,5 +402,223 @@ describe('generateMarkdown (Helper Function)', () => {
         const md = generateMarkdown(emptyFeedData);
         expect(md).toContain("# Empty Feed");
         expect(md).toContain("_No items found._");
+    });
+});
+
+// --- Mock XML Data for External Feed Parsing ---
+const mockRssXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Mock RSS Feed</title>
+    <link>https://example.com/rss</link>
+    <atom:link href="https://example.com/rss/feed.xml" rel="self" type="application/rss+xml" />
+    <description>This is a mock RSS feed for testing.</description>
+    <lastBuildDate>Tue, 02 Apr 2025 10:00:00 GMT</lastBuildDate>
+    <language>en-US</language>
+    <generator>TestGen RSS</generator>
+    <item>
+      <title>RSS Item 2 (Newer)</title>
+      <link>https://example.com/rss/item2</link>
+      <description><![CDATA[Description for <b>RSS</b> item 2.]]></description>
+      <pubDate>Tue, 02 Apr 2025 10:00:00 GMT</pubDate>
+      <guid isPermaLink="true">https://example.com/rss/item2</guid>
+    </item>
+    <item>
+      <title>RSS Item 1 (Older)</title>
+      <link>https://example.com/rss/item1</link>
+      <description>Description for RSS item 1.</description>
+      <pubDate>Mon, 01 Apr 2025 09:00:00 GMT</pubDate>
+      <guid isPermaLink="false">rss-item-1-guid</guid>
+    </item>
+    <item>
+      <title>RSS Item 3 (No Date)</title>
+      <link>https://example.com/rss/item3</link>
+      <description>Description for RSS item 3.</description>
+    </item>
+  </channel>
+</rss>`;
+
+const mockAtomXml = `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="fr">
+  <title>Mock Atom Feed</title>
+  <subtitle>This is a mock Atom feed for testing.</subtitle>
+  <link href="https://example.com/atom/feed.xml" rel="self"/>
+  <link href="https://example.com/atom" rel="alternate"/>
+  <id>urn:uuid:mock-atom-feed</id>
+  <updated>2025-04-02T15:00:00Z</updated>
+  <generator version="1.0" uri="https://example.com/atomgen">TestGen Atom</generator>
+  <entry>
+    <title>Atom Entry 2 (Newer)</title>
+    <link href="https://example.com/atom/entry2" rel="alternate"/>
+    <id>urn:uuid:atom-entry-2</id>
+    <updated>2025-04-02T15:00:00Z</updated>
+    <published>2025-04-02T14:50:00Z</published>
+    <summary type="html"><![CDATA[Summary for <b>Atom</b> entry 2.]]></summary>
+  </entry>
+  <entry>
+    <title>Atom Entry 1 (Older)</title>
+    <link href="https://example.com/atom/entry1"/>
+    <id>urn:uuid:atom-entry-1</id>
+    <updated>2025-04-01T12:00:00Z</updated>
+    <content type="text">Content for Atom entry 1.</content>
+  </entry>
+  <entry>
+    <title>Atom Entry 3 (No Date)</title>
+    <link href="https://example.com/atom/entry3"/>
+    <id>urn:uuid:atom-entry-3</id>
+    <summary>Summary for Atom entry 3.</summary>
+  </entry>
+</feed>`;
+
+const mockInvalidXml = `<data><value>Some random XML</value></data>`;
+const mockMinimalRssNoDates = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Minimal Feed</title></channel></rss>`;
+
+
+describe('fetchUrlContent', () => {
+    const originalFetch = global.fetch;
+    afterEach(() => {
+        global.fetch = originalFetch; // Restore original fetch after each test
+    });
+
+    it('should fetch and return content for a successful response', async () => {
+        global.fetch = jest.fn().mockResolvedValueOnce({
+            ok: true,
+            text: async () => 'Mocked fetched content',
+        });
+        const content = await fetchUrlContent('https://example.com/feed.xml');
+        expect(fetch).toHaveBeenCalledWith('https://example.com/feed.xml', { headers: { 'User-Agent': 'crssnt-feed-generator/1.0' } });
+        expect(content).toBe('Mocked fetched content');
+    });
+
+    it('should throw an error for a non-ok response', async () => {
+        global.fetch = jest.fn().mockResolvedValueOnce({
+            ok: false,
+            status: 404,
+            statusText: 'Not Found',
+        });
+        await expect(fetchUrlContent('https://example.com/notfound.xml'))
+            .rejects.toThrow('Failed to fetch https://example.com/notfound.xml: 404 Not Found');
+    });
+
+    it('should throw an error if fetch itself fails', async () => {
+        global.fetch = jest.fn().mockRejectedValueOnce(new Error('Network error'));
+        await expect(fetchUrlContent('https://example.com/network-error.xml'))
+            .rejects.toThrow('Network error');
+    });
+});
+
+describe('parseXmlFeedWithCheerio', () => {
+    it('should parse a valid XML string and return a Cheerio object', () => {
+        const $ = parseXmlFeedWithCheerio(mockRssXml);
+        expect($).toBeDefined();
+        expect(typeof $.root).toBe('function'); // Basic check for Cheerio object
+        expect($('rss > channel > title').text()).toBe('Mock RSS Feed');
+    });
+});
+
+describe('normalizeParsedFeed', () => {
+    const sourceUrl = 'https://example.com/source';
+
+    describe('RSS Feed', () => {
+        const $ = parseXmlFeedWithCheerio(mockRssXml);
+        const feedData = normalizeParsedFeed($, sourceUrl);
+
+        it('should extract correct RSS metadata', () => {
+            expect(feedData.metadata.title).toBe('Mock RSS Feed');
+            expect(feedData.metadata.link).toBe('https://example.com/rss');
+            expect(feedData.metadata.feedUrl).toBe(sourceUrl);
+            expect(feedData.metadata.description).toBe('This is a mock RSS feed for testing.');
+            expect(feedData.metadata.lastBuildDate.toISOString()).toBe(parseISO('2025-04-02T10:00:00Z').toISOString()); // Newest item date
+            expect(feedData.metadata.language).toBe('en-US');
+            expect(feedData.metadata.generator).toBe('TestGen RSS');
+            expect(feedData.metadata.id).toBe('https://example.com/rss/feed.xml');
+        });
+
+        it('should extract and sort RSS items correctly', () => {
+            expect(feedData.items).toHaveLength(3);
+            expect(feedData.items[0].title).toBe('RSS Item 2 (Newer)');
+            expect(feedData.items[0].link).toBe('https://example.com/rss/item2');
+            expect(feedData.items[0].descriptionContent).toBe('Description for <b>RSS</b> item 2.');
+            expect(feedData.items[0].dateObject.toISOString()).toBe(parseISO('2025-04-02T10:00:00Z').toISOString());
+            expect(feedData.items[0].id).toBe('https://example.com/rss/item2');
+
+            expect(feedData.items[1].title).toBe('RSS Item 1 (Older)');
+            expect(feedData.items[1].id).toBe('rss-item-1-guid');
+
+            expect(feedData.items[2].title).toBe('RSS Item 3 (No Date)');
+            expect(feedData.items[2].dateObject).toBeNull();
+        });
+    });
+
+    describe('Atom Feed', () => {
+        const $ = parseXmlFeedWithCheerio(mockAtomXml);
+        const feedData = normalizeParsedFeed($, sourceUrl);
+
+        it('should extract correct Atom metadata', () => {
+            expect(feedData.metadata.title).toBe('Mock Atom Feed');
+            expect(feedData.metadata.link).toBe('https://example.com/atom');
+            expect(feedData.metadata.feedUrl).toBe(sourceUrl);
+            expect(feedData.metadata.description).toBe('This is a mock Atom feed for testing.');
+            expect(feedData.metadata.lastBuildDate.toISOString()).toBe(parseISO('2025-04-02T15:00:00Z').toISOString()); // Newest item date
+            expect(feedData.metadata.language).toBe('fr');
+            expect(feedData.metadata.generator).toBe('TestGen Atom (https://example.com/atomgen)');
+            expect(feedData.metadata.id).toBe('urn:uuid:mock-atom-feed');
+        });
+
+        it('should extract and sort Atom entries correctly', () => {
+            expect(feedData.items).toHaveLength(3);
+            expect(feedData.items[0].title).toBe('Atom Entry 2 (Newer)');
+            expect(feedData.items[0].link).toBe('https://example.com/atom/entry2');
+            expect(feedData.items[0].descriptionContent).toBe('Summary for <b>Atom</b> entry 2.');
+            expect(feedData.items[0].dateObject.toISOString()).toBe(parseISO('2025-04-02T15:00:00Z').toISOString()); // from <updated>
+            expect(feedData.items[0].id).toBe('urn:uuid:atom-entry-2');
+
+            expect(feedData.items[1].title).toBe('Atom Entry 1 (Older)');
+            expect(feedData.items[1].descriptionContent).toBe('Content for Atom entry 1.');
+
+            expect(feedData.items[2].title).toBe('Atom Entry 3 (No Date)');
+            expect(feedData.items[2].dateObject).toBeNull();
+        });
+    });
+
+    it('should handle unknown feed type', () => {
+        const $ = parseXmlFeedWithCheerio(mockInvalidXml);
+        const feedData = normalizeParsedFeed($, sourceUrl);
+        expect(feedData.metadata.title).toBe('Unknown Feed Type');
+        expect(feedData.metadata.description).toContain('Could not determine feed type');
+        expect(feedData.items).toHaveLength(0);
+        expect(feedData.metadata.lastBuildDate.getTime()).toBe(MOCK_NOW_DATE.getTime()); // Fallback to MOCK_NOW_DATE
+    });
+
+    it('should use MOCK_NOW_DATE for lastBuildDate if no feed/item dates found', () => {
+        const $ = parseXmlFeedWithCheerio(mockMinimalRssNoDates);
+        const feedData = normalizeParsedFeed($, sourceUrl);
+        expect(feedData.metadata.title).toBe('Minimal Feed');
+        expect(feedData.items).toHaveLength(0);
+        expect(feedData.metadata.lastBuildDate.getTime()).toBe(MOCK_NOW_DATE.getTime());
+    });
+
+    it('should limit items based on itemLimit', () => {
+        const $ = parseXmlFeedWithCheerio(mockRssXml);
+        const feedData = normalizeParsedFeed($, sourceUrl, 1); // itemLimit = 1
+        expect(feedData.items).toHaveLength(1);
+        expect(feedData.items[0].title).toBe('RSS Item 2 (Newer)');
+        expect(feedData.metadata.itemCountLimited).toBe(true);
+    });
+
+    it('should limit description length based on charLimit', () => {
+        const $ = parseXmlFeedWithCheerio(mockRssXml);
+        // "Description for <b>RSS</b> item 2." is 32 chars
+        const feedData = normalizeParsedFeed($, sourceUrl, Infinity, 10); // charLimit = 10
+        expect(feedData.items[0].descriptionContent).toBe('Descriptio...');
+        expect(feedData.metadata.itemCharLimited).toBe(true);
+    });
+
+    it('should not mark charLimited if content is shorter than limit', () => {
+        const $ = parseXmlFeedWithCheerio(mockRssXml);
+        const feedData = normalizeParsedFeed($, sourceUrl, Infinity, 100); // charLimit = 100
+        expect(feedData.items[0].descriptionContent).toBe('Description for <b>RSS</b> item 2.');
+        expect(feedData.metadata.itemCharLimited).toBe(false); // Assuming other items are also short
     });
 });
