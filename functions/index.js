@@ -91,23 +91,40 @@ async function handleSheetRequest(request, response, outputFormat = 'rss', itemL
 }
 
 
-async function handleUrlRequest(request, response, outputFormat, itemLimit = 50, charLimit = 500) {
-  const sourceUrl = request.query.url;
+async function handleUrlRequest(request, response, outputFormat, itemLimit = 50, charLimit = 500, urlLimit = 10) {
+  let sourceUrls = request.query.url;
 
-  if (!sourceUrl) {
-      return response.status(400).send('Source URL not provided. Use query parameter "?url=FEED_URL".');
+  if (!sourceUrls || (Array.isArray(sourceUrls) && sourceUrls.filter(u => String(u || '').trim()).length === 0)) {
+      return response.status(400).send('Source URL(s) not provided. Use query parameter "?url=FEED_URL". You can provide multiple "url" parameters.');
   }
 
-  try {
-      new URL(sourceUrl);
-  } catch (e) {
-      return response.status(400).send('Invalid source URL format.');
+  if (!Array.isArray(sourceUrls)) {
+      sourceUrls = [sourceUrls];
+  }
+  sourceUrls = sourceUrls.map(u => String(u || '').trim()).filter(u => u);
+
+  if (sourceUrls.length === 0) {
+    return response.status(400).send('No valid source URLs provided after trimming.');
   }
 
+  if (sourceUrls.length > urlLimit) {
+    return response.status(400).send(`Too many source URLs provided. The maximum allowed is ${urlLimit}. You provided ${sourceUrls.length}.`);
+  }
+
+  for (const url of sourceUrls) {
+      try {
+          new URL(url);
+      } catch (e) {
+          return response.status(400).send(`Invalid source URL format: ${url}`);
+      }
+  }
+  
+  const baseUrl = "https://crssnt.com"
+  const pathAndQuery = request.originalUrl || request.url;
+  const requestUrl = `${baseUrl}${pathAndQuery}`;
+
   try {
-      const xmlString = await feedUtils.fetchUrlContent(sourceUrl);
-      const $ = feedUtils.parseXmlFeedWithCheerio(xmlString);
-      const feedData = feedUtils.normalizeParsedFeed($, sourceUrl, itemLimit, charLimit);
+      const feedData = await feedUtils.processMultipleUrls(sourceUrls, requestUrl, itemLimit, charLimit);
 
       let feedOutput = '';
       let contentType = '';
@@ -173,10 +190,10 @@ exports.sheetToMarkdown = onRequest(
 
 exports.feedToJson = onRequest(
   { cors: true, cpu: 0.1 },
-  (request, response) => handleUrlRequest(request, response, 'json', 50, 500)
+  (request, response) => handleUrlRequest(request, response, 'json', 50, 500, 10)
 );
 
 exports.feedToMarkdown = onRequest(
   { cors: true, cpu: 0.1 },
-  (request, response) => handleUrlRequest(request, response, 'markdown', 50, 500)
+  (request, response) => handleUrlRequest(request, response, 'markdown', 50, 500, 10)
 );
