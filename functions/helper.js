@@ -353,8 +353,10 @@ function normalizeParsedFeed($, sourceUrl, itemLimit = Infinity, charLimit = Inf
 
     const isRss = $('rss').length > 0;
     const isAtom = !isRss && $('feed').length > 0;
+    let sourceType = 'unknown';
 
     if (isRss) {
+        sourceType = 'rss';
         const channel = $('rss > channel').first();
         feedTitle = channel.find('> title').first().text().trim();
         feedLink = channel.find('> link').first().text().trim();
@@ -370,15 +372,16 @@ function normalizeParsedFeed($, sourceUrl, itemLimit = Infinity, charLimit = Inf
             const $item = $(el);
             const title = $item.find('> title').text().trim() || '(Untitled)';
             const link = $item.find('> link').text().trim() || $item.find('guid[isPermaLink="true"]').text().trim() || undefined;
-            const rawDescription = $item.find('> description').html() || $item.find('content\\:encoded').html() || '';
+            const rawDescription = $item.find('> description').html() || $item.find('content\\:encoded').html() || ''; // Prefer content:encoded
             const descriptionContent = _stripCdataWrapper(rawDescription);
             const pubDateStr = $item.find('> pubDate').text().trim();
             const dateObject = parseDateString(pubDateStr);
-            const guid = $item.find('> guid').text().trim() || link;
-
-            items.push({ title, link, dateObject, descriptionContent, id: guid });
+            const guid = $item.find('> guid').text().trim() || link; // Use link as fallback for ID
+            // Add sourceInfo to each item
+            items.push({ title, link, dateObject, descriptionContent, id: guid, sourceInfo: { title: feedTitle, url: sourceUrl, type: 'rss' } });
         });
     } else if (isAtom) {
+        sourceType = 'atom';
         const feed = $('feed').first();
         feedTitle = feed.find('> title').first().text().trim();
         feedLink = feed.find('> link[rel="alternate"]').first().attr('href') || feed.find('> link').first().attr('href');
@@ -386,7 +389,7 @@ function normalizeParsedFeed($, sourceUrl, itemLimit = Infinity, charLimit = Inf
         feedId = feed.find('> id').first().text().trim() || sourceUrl;
         const updatedStr = feed.find('> updated').first().text().trim();
         if (updatedStr) feedLastBuildDate = parseDateString(updatedStr);
-        feedLanguage = feed.attr('xml:lang') || feed.find('> language').text().trim() || 'en';
+        feedLanguage = feed.attr('xml:lang') || feed.find('> language').text().trim() || 'en'; // Atom can have xml:lang
         const generatorNode = feed.find('generator').first();
         feedGenerator = generatorNode.text().trim() || feedGenerator;
         if (generatorNode.attr('uri')) feedGenerator += ` (${generatorNode.attr('uri')})`;
@@ -395,16 +398,15 @@ function normalizeParsedFeed($, sourceUrl, itemLimit = Infinity, charLimit = Inf
             const $entry = $(el);
             const title = $entry.find('> title').text().trim() || '(Untitled)';
             const link = $entry.find('> link[rel="alternate"]').attr('href') || $entry.find('> link').first().attr('href');
-            const rawDescription = $entry.find('> content').html() || $entry.find('> summary').html() || '';
+            const rawDescription = $entry.find('> content').html() || $entry.find('> summary').html() || ''; // Prefer content over summary
             const descriptionContent = _stripCdataWrapper(rawDescription);
-            const updatedStrEntry = $entry.find('> updated').text().trim() || $entry.find('> published').text().trim();
+            const updatedStrEntry = $entry.find('> updated').text().trim() || $entry.find('> published').text().trim(); // Prefer updated
             const dateObject = parseDateString(updatedStrEntry);
             const id = $entry.find('> id').text().trim() || link;
-
-            items.push({ title, link, dateObject, descriptionContent, id });
+            // Add sourceInfo to each item
+            items.push({ title, link, dateObject, descriptionContent, id, sourceInfo: { title: feedTitle, url: sourceUrl, type: 'atom' } });
         });
     } else {
-        // console.warn(`normalizeParsedFeed: Unknown feed type for ${sourceUrl}`);
         feedTitle = "Unknown or Invalid Feed Type";
         feedDescription = `Could not determine feed type (RSS or Atom) for URL: ${sourceUrl}. Please ensure it's a valid XML feed.`;
     }
@@ -430,7 +432,7 @@ function normalizeParsedFeed($, sourceUrl, itemLimit = Infinity, charLimit = Inf
         });
     }
     
-    // If feedLastBuildDate is still null, try to derive from the latest item (after individual sort)
+    // If feedLastBuildDate is still null, try to derive from the latest item (after individual sort and limit)
     if (!feedLastBuildDate && limitedItems.length > 0 && limitedItems[0].dateObject) {
         feedLastBuildDate = limitedItems[0].dateObject;
     }
@@ -439,26 +441,22 @@ function normalizeParsedFeed($, sourceUrl, itemLimit = Infinity, charLimit = Inf
     return {
         metadata: {
             title: feedTitle || 'Untitled Parsed Feed',
-            link: feedLink || sourceUrl,
-            feedUrl: sourceUrl,
+            link: feedLink || sourceUrl, // Link to original site
+            feedUrl: sourceUrl,        // The URL of the feed itself
             description: feedDescription,
             lastBuildDate: feedLastBuildDate, // Can be null if no dates found
             language: feedLanguage,
             generator: feedGenerator,
-            id: feedId,
+            id: feedId, // Unique ID for the feed
             itemCountLimited,
             itemCharLimited,
-            sourceType: isRss ? 'rss' : (isAtom ? 'atom' : 'unknown') // Add source type
+            sourceType // Added sourceType
         },
-        items: limitedItems
+        items: limitedItems // These items now include sourceInfo
     };
 }
 
-/**
- * Processes multiple source URLs, fetches their content, normalizes them into a single feed data structure,
- * sorts all items by date, and applies limits.
- */
-async function processMultipleUrls(sourceUrls, requestUrl, itemLimit = 50, charLimit = 500) {
+async function processMultipleUrls(sourceUrls, requestUrl, itemLimit = 50, charLimit = 500, groupByFeed = false) {
     let allItems = [];
     const allFeedMetadata = []; // Store metadata from each successfully fetched feed
 
@@ -467,13 +465,15 @@ async function processMultipleUrls(sourceUrls, requestUrl, itemLimit = 50, charL
             // console.log(`Processing URL: ${sourceUrl}`);
             const xmlString = await fetchUrlContent(sourceUrl);
             const $ = parseXmlFeedWithCheerio(xmlString);
-            // Fetch all items from each feed initially by passing Infinity for limits.
-            // Limits will be applied after merging and sorting all items.
-            const individualFeedData = normalizeParsedFeed($, sourceUrl, Infinity, Infinity);
+            // Fetch all items from each feed initially by passing Infinity for itemLimit.
+            // Character limit can be applied here if desired, or globally later.
+            // For grouping, we want all items from each source before global limiting.
+            const individualFeedData = normalizeParsedFeed($, sourceUrl, Infinity, charLimit); 
 
             if (individualFeedData && individualFeedData.items && individualFeedData.metadata.sourceType !== 'unknown') {
+                // Items from normalizeParsedFeed already have sourceInfo attached
                 allItems = allItems.concat(individualFeedData.items);
-                allFeedMetadata.push(individualFeedData.metadata); // Store metadata for later use
+                allFeedMetadata.push(individualFeedData.metadata); 
             } else if (individualFeedData && individualFeedData.metadata.sourceType === 'unknown') {
                 console.warn(`Skipping unknown feed type from ${sourceUrl}: ${individualFeedData.metadata.title}`);
             }
@@ -482,14 +482,21 @@ async function processMultipleUrls(sourceUrls, requestUrl, itemLimit = 50, charL
         }
     }
 
-    if (allItems.length === 0) { // Check if any items were successfully processed
+    if (allItems.length === 0) { 
         throw new Error('No valid feed items could be fetched or processed from the provided URLs.');
     }
 
-    sortFeedItems(allItems); // Sort all combined items
+    // If not grouping by feed, sort all items globally.
+    // If grouping, sorting is implicitly handled by processing feeds sequentially and then applying limits.
+    // The output functions will handle presentation order for grouped items.
+    if (!groupByFeed) {
+        sortFeedItems(allItems); 
+    }
+    // Note: If groupByFeed is true, items are already "grouped" by being concatenated in order of sourceUrls.
+    // The output functions (JSON, Markdown) will use this order and sourceInfo.
 
     let itemCountLimited = false;
-    let itemCharLimited = false;
+    let itemCharLimited = false; // This was already handled by normalizeParsedFeed if charLimit wasn't Infinity
     let limitedItems = allItems;
 
     if (allItems.length > itemLimit) {
@@ -497,15 +504,20 @@ async function processMultipleUrls(sourceUrls, requestUrl, itemLimit = 50, charL
         itemCountLimited = true;
     }
 
+    // Character limit was applied per-feed in normalizeParsedFeed if charLimit was not Infinity.
+    // If charLimit was Infinity there, it means we apply it globally now (though less efficient).
+    // For simplicity, we assume charLimit was passed down or we re-apply if needed.
+    // The current normalizeParsedFeed applies charLimit, so this might be redundant if charLimit is passed.
+    // However, if charLimit was Infinity in normalizeParsedFeed, this is the place.
     limitedItems = limitedItems.map(item => {
         const desc = String(item.descriptionContent || '');
-        if (desc.length > charLimit) {
+        if (desc.length > charLimit) { // Re-check or apply if not done before
             item.descriptionContent = desc.slice(0, charLimit) + '...';
-            itemCharLimited = true;
+            itemCharLimited = true; // Set global flag if any item was truncated
         }
         return item;
     });
-
+    
     // Construct combined metadata
     const firstValidMetadata = allFeedMetadata.length > 0 ? allFeedMetadata[0] : {};
     const combinedTitle = allFeedMetadata.length > 1 
@@ -515,9 +527,22 @@ async function processMultipleUrls(sourceUrls, requestUrl, itemLimit = 50, charL
     const combinedLink = requestUrl; // The crssnt URL that generated this combined feed
     const combinedId = `urn:crssnt:combined:${crypto.createHash('sha1').update(sourceUrls.join(',')).digest('hex')}`;
     
-    const latestItemDate = limitedItems.length > 0 && limitedItems[0].dateObject instanceof Date && isValid(limitedItems[0].dateObject)
-        ? limitedItems[0].dateObject
-        : new Date(); 
+    // Determine lastBuildDate: if grouped, it's the latest of all feed's lastBuildDates.
+    // If not grouped, it's the date of the newest item in the combined list.
+    let overallLastBuildDate;
+    if (groupByFeed && allFeedMetadata.length > 0) {
+        overallLastBuildDate = allFeedMetadata.reduce((latest, meta) => {
+            if (meta.lastBuildDate && (!latest || meta.lastBuildDate.getTime() > latest.getTime())) {
+                return meta.lastBuildDate;
+            }
+            return latest;
+        }, null) || new Date();
+    } else {
+         overallLastBuildDate = limitedItems.length > 0 && limitedItems[0].dateObject instanceof Date && isValid(limitedItems[0].dateObject)
+            ? limitedItems[0].dateObject
+            : new Date(); 
+    }
+
 
     let combinedFeedDescription = allFeedMetadata.length > 1
         ? `A combined feed generated from ${allFeedMetadata.length} sources via crssnt.`
@@ -529,14 +554,15 @@ async function processMultipleUrls(sourceUrls, requestUrl, itemLimit = 50, charL
             link: combinedLink, 
             feedUrl: requestUrl, 
             description: combinedFeedDescription,
-            lastBuildDate: latestItemDate,
+            lastBuildDate: overallLastBuildDate,
             generator: 'https://github.com/tgel0/crssnt (combined)',
             id: combinedId,
             itemCountLimited: itemCountLimited,
-            itemCharLimited: itemCharLimited,
+            itemCharLimited: itemCharLimited, // Reflects if any item's char limit was hit
             language: firstValidMetadata.language || 'en',
+            groupByFeed: groupByFeed && sourceUrls.length > 1 // Store the effective grouping status
         },
-        items: limitedItems
+        items: limitedItems // Items will have sourceInfo attached
     };
 }
 
@@ -711,7 +737,7 @@ function generateAtomFeed(feedData) {
 }
 
 
-function generateJsonFeedObject(feedData) {
+function generateJsonFeedObject(feedData, groupByFeed = false, multipleSources = false) {
     if (!feedData || !feedData.metadata || !Array.isArray(feedData.items)) {
         console.error("Invalid feedData passed to generateJsonFeedObject");
         // Return minimal error representation
@@ -729,50 +755,65 @@ function generateJsonFeedObject(feedData) {
         descriptionText += ' Note: This feed may be incomplete due to configured limits.';
     }
 
+    const mapItemToJson = (item) => {
+        const itemDate = (item.dateObject instanceof Date && isValid(item.dateObject))
+                         ? item.dateObject : null; // Keep as null if no valid date
+        
+        let itemId;
+        if (item.id) { // Prefer existing ID from normalization (e.g. original Atom entry ID or RSS GUID)
+            itemId = item.id;
+        } else if (item.link && item.link.startsWith('http')) { // Use link if it's a valid URL
+            itemId = item.link;
+        } else {
+            // Fallback: generate a URN based on feed ID and item content hash
+            const stringToHash = `${item.title || ''}::${String(item.descriptionContent || '')}::${itemDate ? formatISO(itemDate) : 'no-date'}`;
+            itemId = `${metadata.id || 'urn:uuid:temp'}:${crypto.createHash('sha1').update(stringToHash).digest('hex')}`;
+        }
+
+        const jsonItem = {
+            id: itemId,
+            url: item.link, // External URL of the item
+            title: item.title,
+            content_html: String(item.descriptionContent || ''), // Ensure string
+            date_published: itemDate ? formatISO(itemDate) : undefined, // Omit if no valid date
+            // date_modified: itemDate ? formatISO(itemDate) : undefined, // Can be added if different
+        };
+        if (item.customFields) {
+            jsonItem._crssnt_custom_fields = item.customFields;
+        }
+        // Add source feed info if grouping is active and there were multiple sources
+        // The `metadata.groupByFeed` flag from processMultipleUrls already checks for multipleSources.
+        if (metadata.groupByFeed && item.sourceInfo) { 
+            jsonItem._source_feed = {
+                title: item.sourceInfo.title,
+                url: item.sourceInfo.url,
+                type: item.sourceInfo.type
+            };
+        }
+        // Clean up undefined fields from the item
+        Object.keys(jsonItem).forEach(key => jsonItem[key] === undefined && delete jsonItem[key]);
+        return jsonItem;
+    };
+
     const jsonFeed = {
         version: "https://jsonfeed.org/version/1.1",
         title: metadata.title || 'Untitled Feed',
-        home_page_url: metadata.link,
-        feed_url: metadata.feedUrl,
+        home_page_url: metadata.link, // Link to the sheet or combined feed page
+        feed_url: metadata.feedUrl, // Self URL of this generated feed
         description: descriptionText,
-        items: items.map(item => {
-            const itemDate = (item.dateObject instanceof Date && isValid(item.dateObject))
-                             ? item.dateObject : null; 
-            
-            let itemId;
-            if (item.id) { // Prefer existing ID from normalization
-                itemId = item.id;
-            } else if (item.link && item.link.startsWith('http')) {
-                itemId = item.link;
-            } else {
-                const stringToHash = `${item.title || ''}::${String(item.descriptionContent || '')}::${itemDate ? formatISO(itemDate) : 'no-date'}`;
-                itemId = `${metadata.id || 'urn:uuid:temp'}:${crypto.createHash('sha1').update(stringToHash).digest('hex')}`;
-            }
-
-            const jsonItem = {
-                id: itemId,
-                url: item.link,
-                title: item.title,
-                content_html: String(item.descriptionContent || ''),
-                date_published: itemDate ? formatISO(itemDate) : undefined,
-                // date_modified: itemDate ? formatISO(itemDate) : undefined, // Can be added if different
-            };
-            if (item.customFields) {
-                jsonItem._crssnt_custom_fields = item.customFields;
-            }
-            Object.keys(jsonItem).forEach(key => jsonItem[key] === undefined && delete jsonItem[key]);
-            return jsonItem;
-        })
+        items: items.map(mapItemToJson) // Items are always a flat list in JSON feed spec
+                                        // Grouping info is added *inside* each item if requested.
     };
     if (metadata.language) jsonFeed.language = metadata.language;
-    if (metadata.generator) jsonFeed._crssnt_generator = metadata.generator; // Custom field for generator
+    if (metadata.generator) jsonFeed._crssnt_generator = metadata.generator; // Custom extension for generator
 
+    // Clean up undefined top-level fields from the feed object
     Object.keys(jsonFeed).forEach(key => jsonFeed[key] === undefined && delete jsonFeed[key]);
     return jsonFeed;
 }
 
 
-function generateMarkdown(feedData) {
+function generateMarkdown(feedData, groupByFeed = false, multipleSources = false) { // Default groupByFeed to false
    if (!feedData || !feedData.metadata || !Array.isArray(feedData.items)) {
        console.error("Invalid feedData passed to generateMarkdown");
        return "# Error Generating Feed\n\nCould not generate feed due to invalid data.";
@@ -780,39 +821,79 @@ function generateMarkdown(feedData) {
    const { metadata, items } = feedData;
    let md = '';
 
+   // Main Feed Header (H1)
    md += `# ${escapeMarkdown(metadata.title || 'Untitled Feed')}\n\n`;
-   if (metadata.link) md += `**Source:** [${escapeMarkdown(metadata.link)}](${escapeMarkdown(metadata.link)})\n`;
-   if (metadata.feedUrl) md += `**Feed URL:** [${escapeMarkdown(metadata.feedUrl)}](${escapeMarkdown(metadata.feedUrl)})\n`;
-   if (metadata.description) md += `\n*${escapeMarkdown(metadata.description)}*\n`;
+   if (metadata.link) { // This is the home_page_url for the combined feed
+       md += `**Source (Combined View):** [${escapeMarkdown(metadata.link)}](${escapeMarkdown(metadata.link)})\n`;
+   }
+   if (metadata.feedUrl) { // This is the URL of the generated feed itself
+        md += `**Feed URL (This Feed):** [${escapeMarkdown(metadata.feedUrl)}](${escapeMarkdown(metadata.feedUrl)})\n`;
+   }
+   if (metadata.description) {
+       md += `\n*${escapeMarkdown(metadata.description)}*\n`;
+   }
+   // Add truncation notice if applicable
    if (metadata.itemCountLimited || metadata.itemCharLimited) {
        md += `\n**Note: This feed may be incomplete due to configured limits.**\n`;
    }
-   md += `\n---\n\n`;
+   md += `\n---\n\n`; // Separator after main header
 
    if (items.length === 0) {
        md += "_No items found._\n";
    } else {
-       items.forEach(item => {
-           md += `## ${escapeMarkdown(item.title || '(Untitled)')}\n\n`;
-           if (item.dateObject instanceof Date && isValid(item.dateObject)) {
-               md += `*Published: ${format(item.dateObject, 'PPPppp', { timeZone: 'GMT' })} (GMT)*\n`;
-           }
-           if (item.link) {
-               md += `**Link:** [${escapeMarkdown(item.link)}](${escapeMarkdown(item.link)})\n`;
-           }
-           md += `\n${String(item.descriptionContent || '')}\n\n`; 
-
-           if (item.customFields) {
-               md += `**Custom Fields:**\n`;
-               for (const key in item.customFields) {
-                   md += `* ${escapeMarkdown(key)}: ${escapeMarkdown(String(item.customFields[key]))}\n`;
+       // Check the effective grouping status from metadata
+       if (metadata.groupByFeed) { // metadata.groupByFeed is true only if groupByFeed param was true AND multiple sources existed
+           const groupedItems = {};
+           // Group items by their source URL
+           items.forEach(item => {
+               const sourceKey = item.sourceInfo ? item.sourceInfo.url : 'unknown_source';
+               if (!groupedItems[sourceKey]) {
+                   groupedItems[sourceKey] = {
+                       title: item.sourceInfo ? item.sourceInfo.title : 'Unknown Source',
+                       url: item.sourceInfo ? item.sourceInfo.url : '#',
+                       items: []
+                   };
                }
-               md += `\n`;
+               groupedItems[sourceKey].items.push(item);
+           });
+
+           // Render items under their group headers
+           for (const sourceKey in groupedItems) {
+               const group = groupedItems[sourceKey];
+               md += `## From: ${escapeMarkdown(group.title)} ([${escapeMarkdown(group.url)}](${escapeMarkdown(group.url)}))\n\n`; // H2 for source feed
+               group.items.forEach(item => {
+                   md += renderMarkdownItem(item); // Items under group are H3
+               });
            }
-           md += `\n---\n\n`;
-       });
+       } else {
+           // No grouping, render all items flatly
+           items.forEach(item => {
+               md += renderMarkdownItem(item); // Items are H3
+           });
+       }
    }
    return md;
+}
+
+function renderMarkdownItem(item) {
+    let itemMd = `### ${escapeMarkdown(item.title || '(Untitled)')}\n\n`; // Item title as H3
+    if (item.dateObject instanceof Date && isValid(item.dateObject)) {
+        itemMd += `*Published: ${format(item.dateObject, 'PPPppp', { timeZone: 'GMT' })} (GMT)*\n`;
+    }
+    if (item.link) {
+        itemMd += `**Link:** [${escapeMarkdown(item.link)}](${escapeMarkdown(item.link)})\n`;
+    }
+    // No need to add sourceInfo here again if it's already handled by grouping headers
+    itemMd += `\n${String(item.descriptionContent || '')}\n\n`; // Ensure description is string
+    if (item.customFields) {
+        itemMd += `**Custom Fields:**\n`;
+        for (const key in item.customFields) {
+            itemMd += `* ${escapeMarkdown(key)}: ${escapeMarkdown(String(item.customFields[key]))}\n`;
+        }
+        itemMd += `\n`;
+    }
+    itemMd += `\n---\n\n`; // Separator after each item
+    return itemMd;
 }
 
 function generateBlockedFeedPlaceholder(sheetID, outputFormat, feedBaseUrl) {
@@ -821,7 +902,7 @@ function generateBlockedFeedPlaceholder(sheetID, outputFormat, feedBaseUrl) {
     let contentType = '';
     const placeholderTitle = "Feed Unavailable";
     const placeholderDesc = `The requested Google Sheet (ID: ${sheetID}) is currently unavailable or has been blocked by the administrator.`;
-    const placeholderLink = 'https://crssnt.com/';
+    const placeholderLink = 'https://crssnt.com/'; // General link to the service
 
     if (outputFormat === 'atom') {
         contentType = 'application/atom+xml; charset=utf8';

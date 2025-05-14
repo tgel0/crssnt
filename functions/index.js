@@ -93,6 +93,8 @@ async function handleSheetRequest(request, response, outputFormat = 'rss', itemL
 
 async function handleUrlRequest(request, response, outputFormat, itemLimit = 50, charLimit = 500, urlLimit = 10) {
   let sourceUrls = request.query.url;
+  const groupByFeedParam = request.query.group_by_feed;
+  const groupByFeed = groupByFeedParam === 'true' || groupByFeedParam === '1';
 
   if (!sourceUrls || (Array.isArray(sourceUrls) && sourceUrls.filter(u => String(u || '').trim()).length === 0)) {
       return response.status(400).send('Source URL(s) not provided. Use query parameter "?url=FEED_URL". You can provide multiple "url" parameters.');
@@ -124,17 +126,17 @@ async function handleUrlRequest(request, response, outputFormat, itemLimit = 50,
   const requestUrl = `${baseUrl}${pathAndQuery}`;
 
   try {
-      const feedData = await feedUtils.processMultipleUrls(sourceUrls, requestUrl, itemLimit, charLimit);
+      const feedData = await feedUtils.processMultipleUrls(sourceUrls, requestUrl, itemLimit, charLimit, groupByFeed);
 
       let feedOutput = '';
       let contentType = '';
 
       if (outputFormat === 'json') {
-          const jsonObject = feedUtils.generateJsonFeedObject(feedData);
+          const jsonObject = feedUtils.generateJsonFeedObject(feedData, groupByFeed, sourceUrls.length > 1);
           feedOutput = JSON.stringify(jsonObject, null, 2);
           contentType = 'application/feed+json; charset=utf8';
       } else if (outputFormat === 'markdown') {
-          feedOutput = feedUtils.generateMarkdown(feedData);
+          feedOutput = feedUtils.generateMarkdown(feedData, groupByFeed, sourceUrls.length > 1);
           contentType = 'text/markdown; charset=utf8';
       } else {
           // Should not happen for these new endpoints, but as a fallback:

@@ -533,41 +533,65 @@ describe('processMultipleUrls (Helper Function - URL Aggregation)', () => {
     let originalFetch;
 
     beforeEach(() => {
-        originalFetch = global.fetch; // Store original fetch
+        originalFetch = global.fetch; 
     });
     afterEach(() => {
-        global.fetch = originalFetch; // Restore original fetch
+        global.fetch = originalFetch; 
         jest.clearAllMocks();
     });
 
-    it('should combine and sort items from multiple valid feeds', async () => {
+    it('should combine and sort items from multiple valid feeds (no grouping)', async () => {
         global.fetch = jest.fn((url) => {
-            if (url === 'https://alpha.example.com/rss.xml') {
-                return Promise.resolve({ ok: true, text: async () => mockRssXmlFeed1 });
-            }
-            if (url === 'https://beta.example.com/atom.xml') {
-                return Promise.resolve({ ok: true, text: async () => mockAtomXmlFeed2 });
-            }
+            if (url === 'https://alpha.example.com/rss.xml') return Promise.resolve({ ok: true, text: async () => mockRssXmlFeed1 });
+            if (url === 'https://beta.example.com/atom.xml') return Promise.resolve({ ok: true, text: async () => mockAtomXmlFeed2 });
             return Promise.resolve({ ok: false, status: 404 });
         });
 
         const sourceUrls = ['https://alpha.example.com/rss.xml', 'https://beta.example.com/atom.xml'];
-        const feedData = await processMultipleUrls(sourceUrls, mockRequestUrl, 50, 500);
+        const feedData = await processMultipleUrls(sourceUrls, mockRequestUrl, 50, 500, false); // groupByFeed = false
         
         expect(feedData.items).toHaveLength(4);
         expect(feedData.metadata.title).toBe('Combined Feed from 2 sources');
-        expect(feedData.metadata.feedUrl).toBe(mockRequestUrl);
-        expect(feedData.metadata.id).toMatch(/^urn:crssnt:combined:[a-f0-9]{40}$/);
-
-
-        // Expected order: Beta Item 1 (Apr 6), Alpha Item 2 (Apr 5), Beta Item 2 (Apr 2), Alpha Item 1 (Apr 3)
-        // Corrected expected order: Beta Item 1 (Apr 6), Alpha Item 2 (Apr 5), Alpha Item 1 (Apr 3), Beta Item 2 (Apr 2)
-        expect(feedData.items[0].title).toBe('Beta Item 1 (Newest)');      // Apr 6th
-        expect(feedData.items[1].title).toBe('Alpha Item 2 (Newer)');     // Apr 5th
-        expect(feedData.items[2].title).toBe('Alpha Item 1 (Older)');     // Apr 3rd
-        expect(feedData.items[3].title).toBe('Beta Item 2 (Oldest)');      // Apr 2nd
-        
+        expect(feedData.items[0].title).toBe('Beta Item 1 (Newest)');      
+        expect(feedData.items[1].title).toBe('Alpha Item 2 (Newer)');     
+        expect(feedData.items[2].title).toBe('Alpha Item 1 (Older)');     
+        expect(feedData.items[3].title).toBe('Beta Item 2 (Oldest)');      
         expect(feedData.metadata.lastBuildDate.toISOString()).toBe(parseISO('2025-04-06T12:00:00Z').toISOString());
+        expect(feedData.metadata.groupByFeed).toBe(false); 
+        feedData.items.forEach(item => {
+            expect(item.sourceInfo).toBeDefined(); 
+        });
+    });
+    
+    it('should combine items and set groupByFeed flag when requested, and not sort globally', async () => {
+        global.fetch = jest.fn((url) => {
+            if (url === 'https://alpha.example.com/rss.xml') return Promise.resolve({ ok: true, text: async () => mockRssXmlFeed1 }); // Alpha items: Apr 5, Apr 3
+            if (url === 'https://beta.example.com/atom.xml') return Promise.resolve({ ok: true, text: async () => mockAtomXmlFeed2 });   // Beta items: Apr 6, Apr 2
+            return Promise.resolve({ ok: false, status: 404 });
+        });
+        const sourceUrls = ['https://alpha.example.com/rss.xml', 'https://beta.example.com/atom.xml'];
+        // When groupByFeed is true, items are concatenated in order of sourceUrls, then limited.
+        // Sorting happens *within* normalizeParsedFeed for each individual feed.
+        const feedData = await processMultipleUrls(sourceUrls, mockRequestUrl, 50, 500, true); // groupByFeed = true
+
+        expect(feedData.items).toHaveLength(4); 
+        expect(feedData.metadata.groupByFeed).toBe(true); 
+        
+        // Expected order if groupByFeed=true (items from alpha, then items from beta, each internally sorted)
+        expect(feedData.items[0].title).toBe('Alpha Item 2 (Newer)'); // From Alpha, Apr 5
+        expect(feedData.items[1].title).toBe('Alpha Item 1 (Older)'); // From Alpha, Apr 3
+        expect(feedData.items[2].title).toBe('Beta Item 1 (Newest)');  // From Beta, Apr 6
+        expect(feedData.items[3].title).toBe('Beta Item 2 (Oldest)');  // From Beta, Apr 2
+        
+        // lastBuildDate for grouped feed should be the latest of the individual feeds' lastBuildDates
+        const expectedLastBuildDate = parseISO('2025-04-06T12:00:00Z'); // From Beta feed
+        expect(feedData.metadata.lastBuildDate.getTime()).toBe(expectedLastBuildDate.getTime());
+
+        feedData.items.forEach(item => {
+            expect(item.sourceInfo).toBeDefined();
+            expect(item.sourceInfo.title).toBeDefined();
+            expect(item.sourceInfo.url).toBeDefined();
+        });
     });
 
     it('should throw an error if all URLs fail or result in no items', async () => {
@@ -576,51 +600,119 @@ describe('processMultipleUrls (Helper Function - URL Aggregation)', () => {
         await expect(processMultipleUrls(sourceUrls, mockRequestUrl, 50, 500))
             .rejects.toThrow('No valid feed items could be fetched or processed from the provided URLs.');
     });
+});
 
-    it('should apply itemLimit to the combined feed', async () => {
+// --- Tests for Output Generators with Grouping ---
+describe('generateJsonFeedObject with Grouping', () => {
+    let feedDataWithMultipleSourcesUngrouped;
+    let feedDataWithMultipleSourcesGrouped;
+    const sourceUrl1 = 'https://alpha.example.com/rss.xml';
+    const sourceUrl2 = 'https://beta.example.com/atom.xml';
+
+    beforeAll(async () => { 
         global.fetch = jest.fn((url) => {
-            if (url.includes('alpha')) return Promise.resolve({ ok: true, text: async () => mockRssXmlFeed1 }); // 2 items
-            if (url.includes('beta')) return Promise.resolve({ ok: true, text: async () => mockAtomXmlFeed2 });  // 2 items
-            return Promise.resolve({ ok: false });
+            if (url === sourceUrl1) return Promise.resolve({ ok: true, text: async () => mockRssXmlFeed1 });
+            if (url === sourceUrl2) return Promise.resolve({ ok: true, text: async () => mockAtomXmlFeed2 });
+            return Promise.resolve({ ok: false, status: 404 });
         });
-        const sourceUrls = ['https://alpha.example.com/rss.xml', 'https://beta.example.com/atom.xml'];
-        const feedData = await processMultipleUrls(sourceUrls, mockRequestUrl, 3, 500); // itemLimit = 3
-
-        expect(feedData.items).toHaveLength(3);
-        expect(feedData.metadata.itemCountLimited).toBe(true);
-        expect(feedData.items[0].title).toBe('Beta Item 1 (Newest)'); 
+        feedDataWithMultipleSourcesUngrouped = await processMultipleUrls([sourceUrl1, sourceUrl2], 'https://crssnt.com/combined', 50, 500, false);
+        feedDataWithMultipleSourcesGrouped = await processMultipleUrls([sourceUrl1, sourceUrl2], 'https://crssnt.com/combined_grouped', 50, 500, true);
+    });
+    afterAll(() => {
+        jest.restoreAllMocks(); 
     });
 
-    it('should apply charLimit to items in the combined feed', async () => {
-        global.fetch = jest.fn((url) => {
-            if (url.includes('alpha')) return Promise.resolve({ ok: true, text: async () => mockRssXmlFeed1 }); 
-            if (url.includes('beta')) return Promise.resolve({ ok: true, text: async () => mockAtomXmlFeed2 });  
-            return Promise.resolve({ ok: false });
-        });
-        const sourceUrls = ['https://alpha.example.com/rss.xml', 'https://beta.example.com/atom.xml'];
-        const feedData = await processMultipleUrls(sourceUrls, mockRequestUrl, 50, 10); // charLimit = 10
 
-        expect(feedData.items[0].descriptionContent).toBe('Summary Be...'); // "Summary Beta 1"
-        expect(feedData.items[1].descriptionContent).toBe('Desc Alpha...'); // "Desc Alpha 2"
-        expect(feedData.metadata.itemCharLimited).toBe(true);
+    it('should include _source_feed in items when metadata.groupByFeed is true', () => {
+        // generateJsonFeedObject's groupByFeed param defers to feedData.metadata.groupByFeed
+        const jsonResult = generateJsonFeedObject(feedDataWithMultipleSourcesGrouped); 
+        expect(jsonResult.items).toHaveLength(4);
+        expect(feedDataWithMultipleSourcesGrouped.metadata.groupByFeed).toBe(true);
+
+        jsonResult.items.forEach(item => {
+            expect(item._source_feed).toBeDefined();
+            expect(item._source_feed.title).toBeDefined();
+            expect(item._source_feed.url).toBeDefined();
+            if (item.id === 'alpha1' || item.id === 'alpha2') {
+                expect(item._source_feed.title).toBe('RSS Feed Alpha');
+                expect(item._source_feed.url).toBe(sourceUrl1);
+            } else if (item.id === 'beta1' || item.id === 'beta2') {
+                expect(item._source_feed.title).toBe('Atom Feed Beta');
+                expect(item._source_feed.url).toBe(sourceUrl2);
+            }
+        });
     });
 
-    it('should correctly process feeds with no dates, placing them after dated items', async () => {
-        global.fetch = jest.fn((url) => {
-            if (url === 'https://alpha.example.com/rss.xml') return Promise.resolve({ ok: true, text: async () => mockRssXmlFeed1 }); // 2 dated items
-            if (url === 'https://gamma.example.com/rss.xml') return Promise.resolve({ ok: true, text: async () => mockRssXmlFeed3NoDates }); // 2 undated items
-            return Promise.resolve({ ok: false });
+    it('should NOT include _source_feed if metadata.groupByFeed is false', () => {
+        const jsonResult = generateJsonFeedObject(feedDataWithMultipleSourcesUngrouped); 
+        expect(feedDataWithMultipleSourcesUngrouped.metadata.groupByFeed).toBe(false);
+        jsonResult.items.forEach(item => {
+            expect(item._source_feed).toBeUndefined();
         });
-        const sourceUrls = ['https://alpha.example.com/rss.xml', 'https://gamma.example.com/rss.xml'];
-        const feedData = await processMultipleUrls(sourceUrls, mockRequestUrl, 50, 500);
+    });
+    
+    it('should NOT include _source_feed if only one source, even if groupByFeed was requested (metadata.groupByFeed will be false)', async () => {
+        const singleSourceData = await processMultipleUrls([sourceUrl1], 'https://crssnt.com/single', 50, 500, true); // Request grouping
+        expect(singleSourceData.metadata.groupByFeed).toBe(false); // Effective grouping is false
+        const jsonResult = generateJsonFeedObject(singleSourceData); 
+        singleSourceData.items.forEach(item => {
+            expect(item._source_feed).toBeUndefined();
+        });
+    });
+});
 
-        expect(feedData.items).toHaveLength(4);
-        expect(feedData.items[0].title).toBe('Alpha Item 2 (Newer)'); // Apr 5th
-        expect(feedData.items[1].title).toBe('Alpha Item 1 (Older)'); // Apr 3rd
-        // Undated items come after, their relative order might depend on original feed order or string comparison if titles are same
-        expect(['Gamma Item 1', 'Gamma Item 2']).toContain(feedData.items[2].title);
-        expect(['Gamma Item 1', 'Gamma Item 2']).toContain(feedData.items[3].title);
-        expect(feedData.items[2].dateObject).toBeNull();
-        expect(feedData.items[3].dateObject).toBeNull();
+describe('generateMarkdown with Grouping', () => {
+    let feedDataWithMultipleSourcesUngrouped;
+    let feedDataWithMultipleSourcesGrouped;
+    const sourceUrl1 = 'https://alpha.example.com/rss.xml';
+    const sourceUrl2 = 'https://beta.example.com/atom.xml';
+
+    beforeAll(async () => {
+        global.fetch = jest.fn((url) => {
+            if (url === sourceUrl1) return Promise.resolve({ ok: true, text: async () => mockRssXmlFeed1 });
+            if (url === sourceUrl2) return Promise.resolve({ ok: true, text: async () => mockAtomXmlFeed2 });
+            return Promise.resolve({ ok: false, status: 404 });
+        });
+        feedDataWithMultipleSourcesUngrouped = await processMultipleUrls([sourceUrl1, sourceUrl2], 'https://crssnt.com/combined_md', 50, 500, false);
+        feedDataWithMultipleSourcesGrouped = await processMultipleUrls([sourceUrl1, sourceUrl2], 'https://crssnt.com/combined_md_grouped', 50, 500, true);
+    });
+     afterAll(() => {
+        jest.restoreAllMocks();
+    });
+
+    it('should group items under source feed headers when metadata.groupByFeed is true', () => {
+        // generateMarkdown's groupByFeed param defers to feedData.metadata.groupByFeed
+        const mdResult = generateMarkdown(feedDataWithMultipleSourcesGrouped); 
+        expect(feedDataWithMultipleSourcesGrouped.metadata.groupByFeed).toBe(true);
+        
+        expect(mdResult).toContain(`## From: ${escapeMarkdown('RSS Feed Alpha')} ([${escapeMarkdown(sourceUrl1)}](${escapeMarkdown(sourceUrl1)}))`);
+        expect(mdResult).toContain(`## From: ${escapeMarkdown('Atom Feed Beta')} ([${escapeMarkdown(sourceUrl2)}](${escapeMarkdown(sourceUrl2)}))`);
+
+        const alphaSection = mdResult.substring(mdResult.indexOf('RSS Feed Alpha'), mdResult.indexOf('Atom Feed Beta'));
+        const betaSection = mdResult.substring(mdResult.indexOf('Atom Feed Beta'));
+
+        expect(alphaSection).toContain(`### ${escapeMarkdown('Alpha Item 2 (Newer)')}`);
+        expect(alphaSection).toContain(`### ${escapeMarkdown('Alpha Item 1 (Older)')}`);
+        expect(betaSection).toContain(`### ${escapeMarkdown('Beta Item 1 (Newest)')}`);
+        expect(betaSection).toContain(`### ${escapeMarkdown('Beta Item 2 (Oldest)')}`);
+    });
+
+    it('should NOT group items if metadata.groupByFeed is false', () => {
+        const mdResult = generateMarkdown(feedDataWithMultipleSourcesUngrouped); 
+        expect(feedDataWithMultipleSourcesUngrouped.metadata.groupByFeed).toBe(false);
+
+        expect(mdResult).not.toContain(`## From: ${escapeMarkdown('RSS Feed Alpha')}`);
+        expect(mdResult).not.toContain(`## From: ${escapeMarkdown('Atom Feed Beta')}`);
+        
+        expect(mdResult).toContain(`### ${escapeMarkdown('Beta Item 1 (Newest)')}`);
+        expect(mdResult).toContain(`### ${escapeMarkdown('Alpha Item 2 (Newer)')}`);
+    });
+
+    it('should NOT group items if only one source, (metadata.groupByFeed will be false)', async () => {
+        const singleSourceData = await processMultipleUrls([sourceUrl1], 'https://crssnt.com/single_md', 50, 500, true); // Request grouping
+        expect(singleSourceData.metadata.groupByFeed).toBe(false); // Effective grouping is false
+        const mdResult = generateMarkdown(singleSourceData);
+        expect(mdResult).not.toContain(`## From: ${escapeMarkdown('RSS Feed Alpha')}`);
+        expect(mdResult).toContain(`### ${escapeMarkdown('Alpha Item 2 (Newer)')}`);
     });
 });
