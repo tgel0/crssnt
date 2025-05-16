@@ -4,10 +4,15 @@ const { initializeApp } = require("firebase-admin/app");
 
 const feedUtils = require('./helper.js');
 
-setGlobalOptions({ region: "us-central1" });
+setGlobalOptions({ 
+  region: "us-central1",
+  timeoutSeconds: 30
+});
+
 const api_key_2nd_gen = process.env.SHEETS_API_KEY;
 const BLOCKED_SHEET_IDS_STRING = process.env.BLOCKED_SHEET_IDS || "";
 const BLOCKED_SHEET_IDS = new Set(BLOCKED_SHEET_IDS_STRING.split(',').map(id => id.trim()).filter(id => id));
+
 initializeApp();
 
 async function handleSheetRequest(request, response, outputFormat = 'rss', itemLimit = 50, charLimit = 500) {
@@ -16,14 +21,15 @@ async function handleSheetRequest(request, response, outputFormat = 'rss', itemL
   const sheetIDfromURL = pathParts.length > 6 ? pathParts[6] : undefined;
   const sheetID = request.query.id || sheetIDfromURL;
   let sheetNames = request.query.name; // Can be string or array if multiple 'name=' are present
+  const mode = request.query.mode || 'auto';
+  const baseUrl = "https://crssnt.com"
+
   if (Array.isArray(sheetNames)) {
       sheetNames = sheetNames.filter(name => name && typeof name === 'string' && name.trim() !== '');
       if (sheetNames.length === 0) sheetNames = undefined; 
   } else if (typeof sheetNames === 'string' && sheetNames.trim() === '') {
       sheetNames = undefined;
   }
-  const mode = request.query.mode || 'auto';
-  const baseUrl = "https://crssnt.com"
 
   if (!sheetID) {
     return response.status(400).send('Sheet ID not provided in query (?id=) or path.');
@@ -146,7 +152,7 @@ async function handleUrlRequest(request, response, outputFormat, itemLimit = 50,
           contentType = 'application/feed+json; charset=utf8';
       }
 
-      response.set('Cache-Control', 'public, max-age=300, s-maxage=300'); // Cache fetched feeds
+      response.set('Cache-Control', 'public, max-age=300, s-maxage=300');
       return response.status(200).contentType(contentType).send(feedOutput);
 
   } catch (err) {
@@ -166,36 +172,36 @@ async function handleUrlRequest(request, response, outputFormat, itemLimit = 50,
 
 
 exports.previewFunctionV2 = onRequest(
-  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.1 },
+  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.05 },
   (request, response) => handleSheetRequest(request, response, 'rss', 30, 250)
 );
 
 exports.sheetToRSS = onRequest(
-  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.1 },
+  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.05 },
   (request, response) => handleSheetRequest(request, response, 'rss', 50, 500)
 );
 
 exports.sheetToAtom = onRequest(
-  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.1 },
+  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.05 },
   (request, response) => handleSheetRequest(request, response, 'atom', 50, 500)
 );
 
 exports.sheetToJson = onRequest(
-  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.1 },
+  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.05 },
   (request, response) => handleSheetRequest(request, response, 'json', 50, 500)
 );
 
 exports.sheetToMarkdown = onRequest(
-  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.1 },
+  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.05 },
   (request, response) => handleSheetRequest(request, response, 'markdown', 50, 500)
 );
 
 exports.feedToJson = onRequest(
-  { cors: true, cpu: 0.1 },
+  { cors: true, cpu: 0.05 },
   (request, response) => handleUrlRequest(request, response, 'json', 50, 500, 10)
 );
 
 exports.feedToMarkdown = onRequest(
-  { cors: true, cpu: 0.1 },
+  { cors: true, cpu: 0.05 },
   (request, response) => handleUrlRequest(request, response, 'markdown', 50, 500, 10)
 );
