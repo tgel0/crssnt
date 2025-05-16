@@ -197,11 +197,11 @@ exports.sheetToMarkdown = onRequest(
 );
 
 exports.feedToJson = onRequest(
-  { cors: true, cpu: 0.08 },
+  { cors: true, cpu: 1, concurrency: 15 },
   (request, response) => handleUrlRequest(request, response, 'json', 50, 500, 10)
 );
 
 exports.feedToMarkdown = onRequest(
-  { cors: true, cpu: 0.08 },
+  { cors: true, cpu: 1, concurrency: 15 },
   (request, response) => handleUrlRequest(request, response, 'markdown', 50, 500, 10)
 );
