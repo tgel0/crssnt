@@ -172,36 +172,36 @@ async function handleUrlRequest(request, response, outputFormat, itemLimit = 50,
 
 
 exports.previewFunctionV2 = onRequest(
-  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.05 },
+  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.08 },
   (request, response) => handleSheetRequest(request, response, 'rss', 30, 250)
 );
 
 exports.sheetToRSS = onRequest(
-  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.05 },
+  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.08 },
   (request, response) => handleSheetRequest(request, response, 'rss', 50, 500)
 );
 
 exports.sheetToAtom = onRequest(
-  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.05 },
+  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.08 },
   (request, response) => handleSheetRequest(request, response, 'atom', 50, 500)
 );
 
 exports.sheetToJson = onRequest(
-  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.05 },
+  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.08 },
   (request, response) => handleSheetRequest(request, response, 'json', 50, 500)
 );
 
 exports.sheetToMarkdown = onRequest(
-  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.05 },
+  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.08 },
   (request, response) => handleSheetRequest(request, response, 'markdown', 50, 500)
 );
 
 exports.feedToJson = onRequest(
-  { cors: true, cpu: 0.05 },
+  { cors: true, cpu: 0.08 },
   (request, response) => handleUrlRequest(request, response, 'json', 50, 500, 10)
 );
 
 exports.feedToMarkdown = onRequest(
-  { cors: true, cpu: 0.05 },
+  { cors: true, cpu: 0.08 },
   (request, response) => handleUrlRequest(request, response, 'markdown', 50, 500, 10)
 );
