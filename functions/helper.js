@@ -737,10 +737,9 @@ function generateAtomFeed(feedData) {
 }
 
 
-function generateJsonFeedObject(feedData, groupByFeed = false, multipleSources = false) {
+function generateJsonFeedObject(feedData, groupByFeedInternal = false, multipleSources = false, isLlmCompact = false) {
     if (!feedData || !feedData.metadata || !Array.isArray(feedData.items)) {
         console.error("Invalid feedData passed to generateJsonFeedObject");
-        // Return minimal error representation
         return {
             version: "https://jsonfeed.org/version/1.1",
             title: "Error Generating Feed",
@@ -751,100 +750,166 @@ function generateJsonFeedObject(feedData, groupByFeed = false, multipleSources =
     const { metadata, items } = feedData;
 
     let descriptionText = metadata.description || '';
-    if (metadata.itemCountLimited || metadata.itemCharLimited) {
+    if (!isLlmCompact && (metadata.itemCountLimited || metadata.itemCharLimited)) { 
         descriptionText += ' Note: This feed may be incomplete due to configured limits.';
     }
 
     const mapItemToJson = (item) => {
-        const itemDate = (item.dateObject instanceof Date && isValid(item.dateObject))
-                         ? item.dateObject : null; // Keep as null if no valid date
-        
+        const itemDate = (item.dateObject instanceof Date && isValid(item.dateObject)) ? item.dateObject : null;
         let itemId;
-        if (item.id) { // Prefer existing ID from normalization (e.g. original Atom entry ID or RSS GUID)
-            itemId = item.id;
-        } else if (item.link && item.link.startsWith('http')) { // Use link if it's a valid URL
-            itemId = item.link;
-        } else {
-            // Fallback: generate a URN based on feed ID and item content hash
+        if (item.id) itemId = item.id;
+        else if (item.link && item.link.startsWith('http')) itemId = item.link;
+        else {
             const stringToHash = `${item.title || ''}::${String(item.descriptionContent || '')}::${itemDate ? formatISO(itemDate) : 'no-date'}`;
             itemId = `${metadata.id || 'urn:uuid:temp'}:${crypto.createHash('sha1').update(stringToHash).digest('hex')}`;
         }
-
+        
         const jsonItem = {
-            id: itemId,
-            url: item.link, // External URL of the item
+            id: isLlmCompact ? undefined : itemId, // Omitting ID for LLM mode for max brevity
+            url: item.link, 
             title: item.title,
-            content_html: String(item.descriptionContent || ''), // Ensure string
-            date_published: itemDate ? formatISO(itemDate) : undefined, // Omit if no valid date
-            // date_modified: itemDate ? formatISO(itemDate) : undefined, // Can be added if different
+            content_text: String(item.descriptionContent || ''), 
+            date_published: itemDate ? formatISO(itemDate) : undefined, 
         };
-        if (item.customFields) {
+        
+        if (item.customFields && !isLlmCompact) { 
             jsonItem._crssnt_custom_fields = item.customFields;
         }
-        // Add source feed info if grouping is active and there were multiple sources
-        // The `metadata.groupByFeed` flag from processMultipleUrls already checks for multipleSources.
+        
         if (metadata.groupByFeed && item.sourceInfo) { 
             jsonItem._source_feed = {
                 title: item.sourceInfo.title,
-                url: item.sourceInfo.url,
-                type: item.sourceInfo.type
             };
+            if (!isLlmCompact && item.sourceInfo.url) { 
+                 jsonItem._source_feed.url = item.sourceInfo.url;
+            }
         }
-        // Clean up undefined fields from the item
         Object.keys(jsonItem).forEach(key => jsonItem[key] === undefined && delete jsonItem[key]);
         return jsonItem;
     };
 
     const jsonFeed = {
         version: "https://jsonfeed.org/version/1.1",
-        title: metadata.title || 'Untitled Feed',
-        home_page_url: metadata.link, // Link to the sheet or combined feed page
-        feed_url: metadata.feedUrl, // Self URL of this generated feed
-        description: descriptionText,
-        items: items.map(mapItemToJson) // Items are always a flat list in JSON feed spec
-                                        // Grouping info is added *inside* each item if requested.
+        title: isLlmCompact ? undefined : (metadata.title || 'Untitled Feed'), 
+        home_page_url: isLlmCompact ? undefined : metadata.link, 
+        feed_url: isLlmCompact ? undefined : metadata.feedUrl,   
+        description: isLlmCompact ? undefined : descriptionText, 
+        items: items.map(mapItemToJson)
     };
-    if (metadata.language) jsonFeed.language = metadata.language;
-    if (metadata.generator) jsonFeed._crssnt_generator = metadata.generator; // Custom extension for generator
 
-    // Clean up undefined top-level fields from the feed object
+    if (!isLlmCompact) {
+        if (metadata.language) jsonFeed.language = metadata.language;
+        if (metadata.generator) jsonFeed._crssnt_generator = metadata.generator;
+    }
+    
     Object.keys(jsonFeed).forEach(key => jsonFeed[key] === undefined && delete jsonFeed[key]);
     return jsonFeed;
 }
 
 
-function generateMarkdown(feedData, groupByFeed = false, multipleSources = false) { // Default groupByFeed to false
+function generateMarkdown(feedData, groupByFeedInternal = false, multipleSources = false, isLlmCompact = false) { 
    if (!feedData || !feedData.metadata || !Array.isArray(feedData.items)) {
-       console.error("Invalid feedData passed to generateMarkdown");
-       return "# Error Generating Feed\n\nCould not generate feed due to invalid data.";
+       return isLlmCompact ? "Error: Invalid data." : "# Error Generating Feed\n\nCould not generate feed due to invalid data.";
    }
    const { metadata, items } = feedData;
    let md = '';
 
-   // Main Feed Header (H1)
+   if (isLlmCompact) {
+       const outputLines = [];
+       if (metadata.groupByFeed) {
+           const groupedItems = {};
+           items.forEach(item => {
+               const sourceKey = item.sourceInfo ? item.sourceInfo.url : 'unknown_source';
+               if (!groupedItems[sourceKey]) {
+                   groupedItems[sourceKey] = {
+                       title: item.sourceInfo ? item.sourceInfo.title : 'Unknown Source',
+                       items: []
+                   };
+               }
+               groupedItems[sourceKey].items.push(item);
+           });
+
+           let firstGroup = true;
+           for (const sourceKey in groupedItems) {
+               if (!firstGroup) {
+                   outputLines.push("---"); // Separator between source groups
+               }
+               const group = groupedItems[sourceKey];
+               outputLines.push(`# ${group.title}`); // H1 for Source Title
+               group.items.forEach(item => {
+                   outputLines.push(`## ${item.title || '(Untitled)'}`); // H2 for Item Title
+                   outputLines.push(String(item.descriptionContent || '').replace(/\n+/g, ' ')); // Replace newlines in desc with space
+                   if (item.link) outputLines.push(`Link: ${item.link}`);
+                   if (item.dateObject && isValid(item.dateObject)) outputLines.push(`Date: ${formatISO(item.dateObject)}`);
+               });
+               firstGroup = false;
+           }
+       } else { // Not grouped
+           items.forEach((item, index) => {
+               if (index > 0) {
+                   outputLines.push("---"); // Separator between items
+               }
+               outputLines.push(`# ${item.title || '(Untitled)'}`); // H1 for Item Title
+               outputLines.push(String(item.descriptionContent || '').replace(/\n+/g, ' ')); // Replace newlines in desc with space
+               if (item.link) outputLines.push(`Link: ${item.link}`);
+               if (item.dateObject && isValid(item.dateObject)) outputLines.push(`Date: ${formatISO(item.dateObject)}`);
+           });
+       }
+
+       const itemStrings = [];
+       if (metadata.groupByFeed) {
+            const groupedItems = {};
+            items.forEach(item => {
+                const sourceKey = item.sourceInfo ? item.sourceInfo.url : 'unknown_source';
+                if (!groupedItems[sourceKey]) {
+                    groupedItems[sourceKey] = { title: item.sourceInfo ? item.sourceInfo.title : 'Unknown Source', items: [] };
+                }
+                groupedItems[sourceKey].items.push(item);
+            });
+            for (const sourceKey in groupedItems) {
+                const group = groupedItems[sourceKey];
+                let groupString = `# ${group.title}`;
+                const groupItemStrings = [];
+                group.items.forEach(item => {
+                    let itemStr = `## ${item.title || '(Untitled)'} ${String(item.descriptionContent || '').replace(/\n+/g, ' ')}`;
+                    if (item.link) itemStr += ` Link: ${item.link}`;
+                    if (item.dateObject && isValid(item.dateObject)) itemStr += ` Date: ${formatISO(item.dateObject)}`;
+                    groupItemStrings.push(itemStr);
+                });
+                groupString += " " + groupItemStrings.join(" --- "); // Item separator within group
+                itemStrings.push(groupString);
+            }
+       } else {
+            items.forEach(item => {
+                let itemStr = `# ${item.title || '(Untitled)'} ${String(item.descriptionContent || '').replace(/\n+/g, ' ')}`;
+                if (item.link) itemStr += ` Link: ${item.link}`;
+                if (item.dateObject && isValid(item.dateObject)) itemStr += ` Date: ${formatISO(item.dateObject)}`;
+                itemStrings.push(itemStr);
+            });
+       }
+       md = itemStrings.join(" ||| "); // Separator between groups or items if not grouped
+
+       if (metadata.itemCountLimited || metadata.itemCharLimited) {
+           md += " [TRUNCATED]";
+       }
+       return md.trim();
+   }
+
+   // Regular Markdown output (remains multi-line and structured)
    md += `# ${escapeMarkdown(metadata.title || 'Untitled Feed')}\n\n`;
-   if (metadata.link) { // This is the home_page_url for the combined feed
-       md += `**Source (Combined View):** [${escapeMarkdown(metadata.link)}](${escapeMarkdown(metadata.link)})\n`;
-   }
-   if (metadata.feedUrl) { // This is the URL of the generated feed itself
-        md += `**Feed URL (This Feed):** [${escapeMarkdown(metadata.feedUrl)}](${escapeMarkdown(metadata.feedUrl)})\n`;
-   }
-   if (metadata.description) {
-       md += `\n*${escapeMarkdown(metadata.description)}*\n`;
-   }
-   // Add truncation notice if applicable
+   if (metadata.link) md += `**Source (Combined View):** [${escapeMarkdown(metadata.link)}](${escapeMarkdown(metadata.link)})\n`;
+   if (metadata.feedUrl) md += `**Feed URL (This Feed):** [${escapeMarkdown(metadata.feedUrl)}](${escapeMarkdown(metadata.feedUrl)})\n`;
+   if (metadata.description) md += `\n*${escapeMarkdown(metadata.description)}*\n`;
    if (metadata.itemCountLimited || metadata.itemCharLimited) {
        md += `\n**Note: This feed may be incomplete due to configured limits.**\n`;
    }
-   md += `\n---\n\n`; // Separator after main header
+   md += `\n---\n\n`;
 
    if (items.length === 0) {
        md += "_No items found._\n";
    } else {
-       // Check the effective grouping status from metadata
-       if (metadata.groupByFeed) { // metadata.groupByFeed is true only if groupByFeed param was true AND multiple sources existed
+       if (metadata.groupByFeed) { 
            const groupedItems = {};
-           // Group items by their source URL
            items.forEach(item => {
                const sourceKey = item.sourceInfo ? item.sourceInfo.url : 'unknown_source';
                if (!groupedItems[sourceKey]) {
@@ -856,35 +921,36 @@ function generateMarkdown(feedData, groupByFeed = false, multipleSources = false
                }
                groupedItems[sourceKey].items.push(item);
            });
-
-           // Render items under their group headers
            for (const sourceKey in groupedItems) {
                const group = groupedItems[sourceKey];
-               md += `## From: ${escapeMarkdown(group.title)} ([${escapeMarkdown(group.url)}](${escapeMarkdown(group.url)}))\n\n`; // H2 for source feed
-               group.items.forEach(item => {
-                   md += renderMarkdownItem(item); // Items under group are H3
-               });
+               md += `## From: ${escapeMarkdown(group.title)} ([${escapeMarkdown(group.url)}](${escapeMarkdown(group.url)}))\n\n`;
+               group.items.forEach(item => md += renderMarkdownItem(item, false)); // Standard rendering for items in group
            }
        } else {
-           // No grouping, render all items flatly
-           items.forEach(item => {
-               md += renderMarkdownItem(item); // Items are H3
-           });
+           items.forEach(item => md += renderMarkdownItem(item, false)); // Standard rendering
        }
    }
    return md;
 }
 
-function renderMarkdownItem(item) {
-    let itemMd = `### ${escapeMarkdown(item.title || '(Untitled)')}\n\n`; // Item title as H3
+// This function is now primarily for the non-compact Markdown path.
+function renderMarkdownItem(item, isLlmCompact = false) {
+    if (isLlmCompact) { 
+        let itemStr = `${item.title || '(Untitled)'} - ${String(item.descriptionContent || '').replace(/\n+/g, ' ')}`;
+        if (item.link) itemStr += ` (${item.link})`;
+        if (item.dateObject && isValid(item.dateObject)) itemStr += ` [${formatISO(item.dateObject)}]`;
+        return itemStr;
+    }
+
+    // Regular Markdown item rendering
+    let itemMd = `### ${escapeMarkdown(item.title || '(Untitled)')}\n\n`;
     if (item.dateObject instanceof Date && isValid(item.dateObject)) {
         itemMd += `*Published: ${format(item.dateObject, 'PPPppp', { timeZone: 'GMT' })} (GMT)*\n`;
     }
     if (item.link) {
         itemMd += `**Link:** [${escapeMarkdown(item.link)}](${escapeMarkdown(item.link)})\n`;
     }
-    // No need to add sourceInfo here again if it's already handled by grouping headers
-    itemMd += `\n${String(item.descriptionContent || '')}\n\n`; // Ensure description is string
+    itemMd += `\n${String(item.descriptionContent || '')}\n\n`; 
     if (item.customFields) {
         itemMd += `**Custom Fields:**\n`;
         for (const key in item.customFields) {
@@ -892,9 +958,10 @@ function renderMarkdownItem(item) {
         }
         itemMd += `\n`;
     }
-    itemMd += `\n---\n\n`; // Separator after each item
+    itemMd += `\n---\n\n`;
     return itemMd;
 }
+
 
 function generateBlockedFeedPlaceholder(sheetID, outputFormat, feedBaseUrl) {
     const statusCode = 410; // Gone
@@ -938,12 +1005,12 @@ module.exports = {
     fetchUrlContent,
     parseXmlFeedWithCheerio,
     normalizeParsedFeed,
-    processMultipleUrls, // Export the new function
+    processMultipleUrls,
     generateRssFeed,
     generateAtomFeed,
     generateJsonFeedObject,
     generateMarkdown,    
     generateBlockedFeedPlaceholder,
     escapeMarkdown, 
-    escapeXmlMinimal // Also export this if needed by tests or other modules
+    escapeXmlMinimal
 };

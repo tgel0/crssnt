@@ -21,7 +21,9 @@ async function handleSheetRequest(request, response, outputFormat = 'rss', itemL
   const sheetIDfromURL = pathParts.length > 6 ? pathParts[6] : undefined;
   const sheetID = request.query.id || sheetIDfromURL;
   let sheetNames = request.query.name; // Can be string or array if multiple 'name=' are present
-  const mode = request.query.mode || 'auto';
+  const mode = request.query.mode || 'auto'; 
+  const llmCompactParam = request.query.llm_compact; // New param for compact LLM output
+  const isLlmCompact = llmCompactParam === 'true' || llmCompactParam === '1';
   const baseUrl = "https://crssnt.com"
 
   if (Array.isArray(sheetNames)) {
@@ -57,12 +59,12 @@ async function handleSheetRequest(request, response, outputFormat = 'rss', itemL
         feedOutput = feedUtils.generateAtomFeed(feedData);
         contentType = 'application/atom+xml; charset=utf8';
     } else if (outputFormat === 'json') {
-        const jsonObject = feedUtils.generateJsonFeedObject(feedData);
-        feedOutput = JSON.stringify(jsonObject, null, 2);
+        const jsonObject = feedUtils.generateJsonFeedObject(feedData, false, false, isLlmCompact); 
+        feedOutput = isLlmCompact ? JSON.stringify(jsonObject) : JSON.stringify(jsonObject, null, 2);
         contentType = 'application/feed+json; charset=utf8';
     } else if (outputFormat === 'markdown') {
-        feedOutput = feedUtils.generateMarkdown(feedData);
-        contentType = 'text/markdown; charset=utf8';
+        feedOutput = feedUtils.generateMarkdown(feedData, false, false, isLlmCompact); 
+        contentType = isLlmCompact ? 'text/plain; charset=utf8' : 'text/markdown; charset=utf8';
     } else { // Default to RSS
         feedOutput = feedUtils.generateRssFeed(feedData);
         contentType = 'application/rss+xml; charset=utf8';
@@ -101,6 +103,8 @@ async function handleUrlRequest(request, response, outputFormat, itemLimit = 50,
   let sourceUrls = request.query.url;
   const groupByFeedParam = request.query.group_by_feed;
   const groupByFeed = groupByFeedParam === 'true' || groupByFeedParam === '1';
+  const llmCompactParam = request.query.llm_compact; // New param for compact LLM output
+  const isLlmCompact = llmCompactParam === 'true' || llmCompactParam === '1';
 
   if (!sourceUrls || (Array.isArray(sourceUrls) && sourceUrls.filter(u => String(u || '').trim()).length === 0)) {
       return response.status(400).send('Source URL(s) not provided. Use query parameter "?url=FEED_URL". You can provide multiple "url" parameters.');
@@ -138,12 +142,12 @@ async function handleUrlRequest(request, response, outputFormat, itemLimit = 50,
       let contentType = '';
 
       if (outputFormat === 'json') {
-          const jsonObject = feedUtils.generateJsonFeedObject(feedData, groupByFeed, sourceUrls.length > 1);
-          feedOutput = JSON.stringify(jsonObject, null, 2);
+          const jsonObject = feedUtils.generateJsonFeedObject(feedData, groupByFeed, sourceUrls.length > 1, isLlmCompact);
+          feedOutput = isLlmCompact ? JSON.stringify(jsonObject) : JSON.stringify(jsonObject, null, 2);
           contentType = 'application/feed+json; charset=utf8';
-      } else if (outputFormat === 'markdown') {
-          feedOutput = feedUtils.generateMarkdown(feedData, groupByFeed, sourceUrls.length > 1);
-          contentType = 'text/markdown; charset=utf8';
+    } else if (outputFormat === 'markdown') {
+          feedOutput = feedUtils.generateMarkdown(feedData, groupByFeed, sourceUrls.length > 1, isLlmCompact);
+          contentType = isLlmCompact ? 'text/plain; charset=utf8' : 'text/markdown; charset=utf8';
       } else {
           // Should not happen for these new endpoints, but as a fallback:
           console.warn(`Unsupported output format '${outputFormat}' requested for URL feed. Defaulting to JSON.`);
