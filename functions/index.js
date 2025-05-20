@@ -15,16 +15,39 @@ const BLOCKED_SHEET_IDS = new Set(BLOCKED_SHEET_IDS_STRING.split(',').map(id => 
 
 initializeApp();
 
-async function handleSheetRequest(request, response, outputFormat = 'rss', itemLimit = 50, charLimit = 500) {
+async function handleSheetRequest(request, response, outputFormat = 'rss', functionDefinedItemLimit = 50, functionDefinedCharLimit = 500) {
 
   const pathParts = request.path.split("/");
   const sheetIDfromURL = pathParts.length > 6 ? pathParts[6] : undefined;
   const sheetID = request.query.id || sheetIDfromURL;
   let sheetNames = request.query.name; // Can be string or array if multiple 'name=' are present
-  const mode = request.query.mode || 'auto'; 
+
+  // Determine mode: prefer new param, fallback to old, then default to 'auto'
+  let mode = 'auto';
+  const useManualModeParam = request.query.use_manual_mode;
+  const legacyModeParam = request.query.mode;
+
+  if (useManualModeParam === 'true' || useManualModeParam === '1') {
+      mode = 'manual';
+  } else if (legacyModeParam === 'manual') {
+      mode = 'manual';
+  }
+
   const llmCompactParam = request.query.llm_compact; // New param for compact LLM output
   const isLlmCompact = llmCompactParam === 'true' || llmCompactParam === '1';
   const baseUrl = "https://crssnt.com"
+
+  // Determine effective itemLimit
+  let effectiveItemLimit = functionDefinedItemLimit;
+  const queryMaxItems = request.query.max_items;
+  if (queryMaxItems) {
+      const queryLimit = parseInt(queryMaxItems, 10);
+      if (!isNaN(queryLimit) && queryLimit > 0) {
+          effectiveItemLimit = Math.min(functionDefinedItemLimit, queryLimit);
+      }
+  }
+  // charLimit not configurable via query param for now
+  const effectiveCharLimit = functionDefinedCharLimit;
 
   if (Array.isArray(sheetNames)) {
       sheetNames = sheetNames.filter(name => name && typeof name === 'string' && name.trim() !== '');
@@ -50,7 +73,7 @@ async function handleSheetRequest(request, response, outputFormat = 'rss', itemL
     const pathAndQuery = request.originalUrl || request.url;
     const requestUrl = `${baseUrl}${pathAndQuery}`;
 
-    const feedData = feedUtils.buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl, itemLimit, charLimit);
+    const feedData = feedUtils.buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl, effectiveItemLimit, effectiveCharLimit);
 
     let feedOutput = '';
     let contentType = '';
@@ -99,12 +122,24 @@ async function handleSheetRequest(request, response, outputFormat = 'rss', itemL
 }
 
 
-async function handleUrlRequest(request, response, outputFormat, itemLimit = 10, charLimit = 500, urlLimit = 10) {
+async function handleUrlRequest(request, response, outputFormat, functionDefinedItemLimit = 10, functionDefinedCharLimit = 500, functionDefinedUrlLimit = 10) {
   let sourceUrls = request.query.url;
   const groupByFeedParam = request.query.group_by_feed;
   const groupByFeed = groupByFeedParam === 'true' || groupByFeedParam === '1';
-  const llmCompactParam = request.query.llm_compact; // New param for compact LLM output
+  const llmCompactParam = request.query.llm_compact;
   const isLlmCompact = llmCompactParam === 'true' || llmCompactParam === '1';
+
+  // Determine effective itemLimit
+  let effectiveItemLimit = functionDefinedItemLimit;
+  const queryMaxItems = request.query.max_items;
+  if (queryMaxItems) {
+      const queryLimit = parseInt(queryMaxItems, 10);
+      if (!isNaN(queryLimit) && queryLimit > 0) {
+          effectiveItemLimit = Math.min(functionDefinedItemLimit, queryLimit);
+      }
+  }
+
+  const effectiveCharLimit = functionDefinedCharLimit;
 
   if (!sourceUrls || (Array.isArray(sourceUrls) && sourceUrls.filter(u => String(u || '').trim()).length === 0)) {
       return response.status(400).send('Source URL(s) not provided. Use query parameter "?url=FEED_URL". You can provide multiple "url" parameters.');
@@ -119,8 +154,8 @@ async function handleUrlRequest(request, response, outputFormat, itemLimit = 10,
     return response.status(400).send('No valid source URLs provided after trimming.');
   }
 
-  if (sourceUrls.length > urlLimit) {
-    return response.status(400).send(`Too many source URLs provided. The maximum allowed is ${urlLimit}. You provided ${sourceUrls.length}.`);
+  if (sourceUrls.length > functionDefinedUrlLimit) {
+    return response.status(400).send(`Too many source URLs provided. The maximum allowed is ${functionDefinedUrlLimit}. You provided ${sourceUrls.length}.`);
   }
 
   for (const url of sourceUrls) {
@@ -136,25 +171,27 @@ async function handleUrlRequest(request, response, outputFormat, itemLimit = 10,
   const requestUrl = `${baseUrl}${pathAndQuery}`;
 
   try {
-      const feedData = await feedUtils.processMultipleUrls(sourceUrls, requestUrl, itemLimit, charLimit, groupByFeed);
+      const feedData = await feedUtils.processMultipleUrls(sourceUrls, requestUrl, effectiveItemLimit, effectiveCharLimit, groupByFeed);
 
       let feedOutput = '';
       let contentType = '';
 
       if (outputFormat === 'json') {
-          const jsonObject = feedUtils.generateJsonFeedObject(feedData, groupByFeed, sourceUrls.length > 1, isLlmCompact);
-          feedOutput = isLlmCompact ? JSON.stringify(jsonObject) : JSON.stringify(jsonObject, null, 2);
-          contentType = 'application/feed+json; charset=utf8';
+        const jsonObject = feedUtils.generateJsonFeedObject(feedData, groupByFeed, sourceUrls.length > 1, isLlmCompact);
+        feedOutput = isLlmCompact ? JSON.stringify(jsonObject) : JSON.stringify(jsonObject, null, 2);
+        contentType = 'application/feed+json; charset=utf8';
     } else if (outputFormat === 'markdown') {
-          feedOutput = feedUtils.generateMarkdown(feedData, groupByFeed, sourceUrls.length > 1, isLlmCompact);
-          contentType = isLlmCompact ? 'text/plain; charset=utf8' : 'text/markdown; charset=utf8';
-      } else {
-          // Should not happen for these new endpoints, but as a fallback:
-          console.warn(`Unsupported output format '${outputFormat}' requested for URL feed. Defaulting to JSON.`);
-          const jsonObject = feedUtils.generateJsonFeedObject(feedData);
-          feedOutput = JSON.stringify(jsonObject, null, 2);
-          contentType = 'application/feed+json; charset=utf8';
-      }
+        feedOutput = feedUtils.generateMarkdown(feedData, groupByFeed, sourceUrls.length > 1, isLlmCompact);
+        contentType = isLlmCompact ? 'text/plain; charset=utf8' : 'text/markdown; charset=utf8'; 
+    } else if (outputFormat === 'atom') { 
+        feedOutput = feedUtils.generateAtomFeed(feedData);
+        contentType = 'application/atom+xml; charset=utf8';
+    } else { 
+        console.warn(`Unsupported or non-standard output format '${outputFormat}' requested for URL feed. Defaulting to JSON.`);
+        const jsonObject = feedUtils.generateJsonFeedObject(feedData, false, false, false); 
+        feedOutput = JSON.stringify(jsonObject, null, 2);
+        contentType = 'application/feed+json; charset=utf8';
+    }
 
       response.set('Cache-Control', 'public, max-age=300, s-maxage=300');
       return response.status(200).contentType(contentType).send(feedOutput);
@@ -198,6 +235,11 @@ exports.sheetToJson = onRequest(
 exports.sheetToMarkdown = onRequest(
   { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.08 },
   (request, response) => handleSheetRequest(request, response, 'markdown', 50, 500)
+);
+
+exports.feedToAtom = onRequest(
+  { cors: true, cpu: 1, concurrency: 15 },
+  (request, response) => handleUrlRequest(request, response, 'atom', 10, 500, 10)
 );
 
 exports.feedToJson = onRequest(
