@@ -99,7 +99,7 @@ async function handleSheetRequest(request, response, outputFormat = 'rss', itemL
 }
 
 
-async function handleUrlRequest(request, response, outputFormat, itemLimit = 50, charLimit = 500, urlLimit = 10) {
+async function handleUrlRequest(request, response, outputFormat, itemLimit = 10, charLimit = 500, urlLimit = 10) {
   let sourceUrls = request.query.url;
   const groupByFeedParam = request.query.group_by_feed;
   const groupByFeed = groupByFeedParam === 'true' || groupByFeedParam === '1';
@@ -202,10 +202,10 @@ exports.sheetToMarkdown = onRequest(
 
 exports.feedToJson = onRequest(
   { cors: true, cpu: 1, concurrency: 15 },
-  (request, response) => handleUrlRequest(request, response, 'json', 50, 500, 10)
+  (request, response) => handleUrlRequest(request, response, 'json', 10, 500, 10)
 );
 
 exports.feedToMarkdown = onRequest(
   { cors: true, cpu: 1, concurrency: 15 },
-  (request, response) => handleUrlRequest(request, response, 'markdown', 50, 500, 10)
+  (request, response) => handleUrlRequest(request, response, 'markdown', 10, 500, 10)
 );
