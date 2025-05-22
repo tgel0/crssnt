@@ -1,12 +1,12 @@
 # Privacy Policy for crssnt
 
-**Last Updated:** October 2023
+**Last Updated:** May 2025
 
 Thank you for using `crssnt`! This Privacy Policy explains how `crssnt` handles information when you use the service.
 
 ## Information We Process
 
-`crssnt` is designed to be a stateless service for generating and converting RSS feeds.
+`crssnt` is designed to be a stateless service for generating and converting feeds.
 
 *   **URLs Provided by You:** When you use `crssnt` to generate a feed from a Google Sheet or convert an existing feed, you provide a URL. `crssnt` fetches data from this URL to perform the requested operation.
     *   **Google Sheets:** If you provide a URL for a Google Sheet, `crssnt` accesses the CSV data published to the web from that sheet. `crssnt` only accesses data that you have explicitly made public via Google's "Publish to web" feature.
