@@ -1,46 +1,71 @@
-<p align="center">
-  <a href="https://crssnt.com/">
-    <img src="logo.jpg" alt="crssnt logo" />
-  </a>
-</p>
+# crssnt 🥐
 
-[crssnt](https://crssnt.com/) is an open-source RSS feed generator for Google Sheets. With crssnt, you can create your own <b>c</b>ustom <b>RSS</b> feed from any data source that you can get displayed in a (public) Google Sheet:
+[![Build Status](https://github.com/tgel0/crssnt/actions/workflows/main.yml/badge.svg)](https://github.com/tgel0/crssnt/actions/workflows/main.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-- existing RSS feeds
-- websites and APIs
-- data from manual input
-- data from Sheets add-ons
-- etc.
+## Overview
 
-<hr />
+`crssnt` converts RSS/Atom feeds into LLM-friendly Markdown or JSON. This simplifies integrating feed content into AI workflows.
 
 ## Quickstart
 
-The easiest way to generate an RSS feed with crssnt is to add `https://crssnt.com/preview/` to the beginning of your public Google Sheet URL, like this:
-
+This fetches the BBC News RSS feed and returns its content as Markdown optimized for language models., with the `&llm_compact=true` parameter:
 
 ```
-https://crssnt.com/preview/https://docs.google.com/spreadsheets/d/1wgHZMH8-kQsC0z38mnrfGpR1cgQE7yu2kUQB9On9iJw
+https://crssnt.com/v1/feed/md/?url=http://feeds.bbci.co.uk/news/rss.xml&llm_compact=true
 ```
-There is more details in this [blog post](https://www.notion.so/tgel0/Start-here-crssnt-101-how-to-get-started-043e0a6913a84fea8165e4fe83659258).
+
+This uses the `group_by_feed=true` parameter to fetch and group items from BBC News and The Guardian and return a combined LLM-optimized Markdown output.
+```
+https://crssnt.com/v1/feed/md/?url=http://feeds.bbci.co.uk/news/rss.xml&url=https://www.theguardian.com/world/rss&llm_compact=true&group_by_feed=true
+```
 
 
+## Features
+
+*   **LLM-Optimized Conversion:** Transforms RSS/Atom feeds into structured Markdown or JSON, with an `llm_compact` option for conciseness.
+*   **Multiple Output Formats:** Supports Markdown, JSON, and Atom for converted feeds.
+*   **Feed Aggregation:** Combines (and auto-sorts by date) items from multiple source feeds.
+*   **Google Sheet Support:** Can also generate feeds (RSS, Atom, JSON, Markdown) from public Google Sheets.
+
+## Endpoints
+
+Access via `https://crssnt.com/` followed by these endpoint paths:
+
+**Feed Conversion:**
+*   `/v1/feed/md/`
+*   `/v1/feed/json/`
+*   `/v1/feed/atom/`
+
+**Google Sheet Processing:**
+*   `/v1/sheet/md/`
+*   `/v1/sheet/json/`
+*   `/v1/sheet/rss/`
+*   `/v1/sheet/atom/`
+
+## Query Parameters
+
+| Parameter         | Description                                                                                                   | Supported Endpoints                                    | Example Values/Notes                                      |
+|-------------------|---------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|-----------------------------------------------------------|
+| `url`             | URL of the source RSS/Atom feed. Stack up to 10 URLs together using `&url=`                                   | `/v1/feed/md/`, `/v1/feed/json/`, `/v1/feed/atom/`                          | `url=http://example.com/feed.xml`                         |
+| `llm_compact`     | If `true`, produces compact JSON or Markdown output for LLMs.                                                 | `/v1/feed/md/`, `/v1/feed/json/`, `/v1/sheet/md/`, `/v1/sheet/json/`       | `true`, `false`                                           |
+| `group_by_feed`   | If `true` and multiple `url`s are provided, items in JSON/Markdown are grouped by original feed title.        | `/v1/feed/md/`, `/v1/feed/json/`                                            | `true`, `false`                                           |
+| `max_items`       | Limits the number of items returned.                                                                          | All data-returning functions                                                | `1`, `10`                                                |
+| `id`              | Google Sheet ID (from its URL).                                                                               | `/v1/sheet/*`                                                  | `your-sheet-id`                                           |
+| `name`            | Name of a specific sheet/tab in Google Spreadsheet. Multiple `name` params for multiple sheets. Defaults to first. | `/v1/sheet/*`                                                  | `Sheet1`, `name=MyData&name=Sheet2`                       |
+| `use_manual_mode` | If `true`, uses specific column headers (`title`, `link`, etc.) for mapping. Default `false` (auto-detection). | `/v1/sheet/*`                                                | `true`, `false`                                           |
 ## Data Privacy
 
-No personal data is being stored while using the crssnt feed generator. Some general usage data such as date and time of the request as well as the underlying Google Sheet ID are stored for analytics purposes. You can disable the Sheet ID logging by adding `&logging=false` to the end of the crssnt feed URL.
+`crssnt` processes user-provided URLs to fetch data. It's a transient processor and doesn't store feed data. Standard logging may occur. See [Privacy Policy](PRIVACY.md).
 
-Read more [here](https://crssnt.com/legal).
+## Self-Hosting
 
-## For Devs
+`crssnt` can be self-hosted as Firebase Cloud Functions. Refer to the Firebase documentation for deploying functions. Use the Firebase Emulator Suite for local testing. The `https://crssnt.com/` service is recommended for most users.
 
-### Installing, Contributing
+## Contributing
 
-As explained above, you can use crssnt without any installation by using my free hosted version via `https://crssnt.com/preview/`. If you want to install it on your own server for exploration or contribution purposes continue reading below.
+Contributions are welcome. Please fork the repository, make your changes on a new branch, and submit a pull request.
 
-Crssnt is built with [Cloud Functions for Firebase](https://firebase.google.com/docs/functions). Check out the official [Getting Started Guide](https://firebase.google.com/docs/functions/get-started) to learn more about Firebase Functions.
+## License
 
-Once you have installed the Firebase CLI and cloned this repository, you can emulate the function locally by running `firebase emulators:start` and going to `http://localhost:4000/`.
-
-### License
-
-Licensed under the The MIT License. Copyright 2023 Tomi Gelo.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
