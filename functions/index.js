@@ -15,7 +15,14 @@ const BLOCKED_SHEET_IDS = new Set(BLOCKED_SHEET_IDS_STRING.split(',').map(id => 
 
 initializeApp();
 
-async function handleSheetRequest(request, response, outputFormat = 'rss', functionDefinedItemLimit = 50, functionDefinedCharLimit = 500) {
+async function handleSheetRequest(
+  request, 
+  response, 
+  outputFormat = 'rss', 
+  functionDefinedItemLimit = 50, 
+  functionDefinedCharLimit = 500, 
+  isPreviewContext = false
+) {
 
   const pathParts = request.path.split("/");
   const sheetIDfromURL = pathParts.length > 6 ? pathParts[6] : undefined;
@@ -73,7 +80,7 @@ async function handleSheetRequest(request, response, outputFormat = 'rss', funct
     const pathAndQuery = request.originalUrl || request.url;
     const requestUrl = `${baseUrl}${pathAndQuery}`;
 
-    const feedData = feedUtils.buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl, effectiveItemLimit, effectiveCharLimit);
+    const feedData = feedUtils.buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl, effectiveItemLimit, effectiveCharLimit, isPreviewContext);
 
     let feedOutput = '';
     let contentType = '';
@@ -214,7 +221,7 @@ async function handleUrlRequest(request, response, outputFormat, functionDefined
 
 exports.previewFunctionV2 = onRequest(
   { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.08 },
-  (request, response) => handleSheetRequest(request, response, 'rss', 30, 250)
+  (request, response) => handleSheetRequest(request, response, 'rss', 10, 250, true)
 );
 
 exports.sheetToRSS = onRequest(

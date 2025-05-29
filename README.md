@@ -3,6 +3,12 @@
 [![Build Status](https://github.com/tgel0/crssnt/actions/workflows/main.yml/badge.svg)](https://github.com/tgel0/crssnt/actions/workflows/main.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+> [!IMPORTANT]
+> Deprecation notice for the `/preview` endpoint:
+>
+> The `/preview` endpoint is now deprecated and will be removed in a future update. 
+> Please migrate to `v1/sheet/rss` or `v1/sheet/atom` for more features and better performance instead.
+
 ## Overview
 
 `crssnt` converts RSS/Atom feeds into LLM-friendly Markdown or JSON. This simplifies integrating feed content into AI workflows.

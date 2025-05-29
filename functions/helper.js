@@ -218,7 +218,7 @@ function generateFeedManualModeInternal(values) {
     return items;
 }
 
-function buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl, itemLimit = 50, charLimit = 500) {
+function buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl, itemLimit = 50, charLimit = 500, isPreview = false) {
     let allItems = [];
     let anySheetWasItemLimited = false;
     let anySheetWasCharLimited = false;
@@ -265,7 +265,8 @@ function buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl, itemLim
             lastBuildDate: latestItemDate,
             generator: 'https://github.com/tgel0/crssnt',
             id: `urn:google-sheet:${sheetID}`,
-            itemCountLimited: anySheetWasItemLimited, // True if any sheet hit its item limit
+            itemCountLimited: anySheetWasItemLimited, 
+            isPreview: isPreview, // True if any sheet hit its item limit
             itemCharLimited: anySheetWasCharLimited  // True if any item in any sheet hit char limit
         },
         items: allItems // This is the final list of items, potentially combined from multiple sheets
@@ -561,6 +562,10 @@ function generateRssFeed(feedData) {
     const itemXmlStrings = items.map(item => generateRssItemXml(item)).join('\n            ');
 
     let descriptionText = metadata.description || '';
+    if (metadata.isPreview) {
+        const deprecationNotice = "DEPRECATION NOTICE: This /preview endpoint is deprecated and will be removed in a future update. Please migrate to the v1/sheet/rss and v1/sheet/atom endpoints for continued service. ";
+        descriptionText = deprecationNotice + descriptionText;
+    }
     if (metadata.itemCountLimited || metadata.itemCharLimited) {
         descriptionText += ' [Note: Feed content may be truncated due to limits.]';
     }
