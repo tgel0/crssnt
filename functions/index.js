@@ -21,7 +21,8 @@ async function handleSheetRequest(
   outputFormat = 'rss', 
   functionDefinedItemLimit = 50, 
   functionDefinedCharLimit = 500, 
-  isPreviewContext = false
+  isPreviewContext = false,
+  cacheTimeSeconds = 300
 ) {
 
   const pathParts = request.path.split("/");
@@ -100,7 +101,7 @@ async function handleSheetRequest(
         contentType = 'application/rss+xml; charset=utf8';
     }
 
-    response.set('Cache-Control', 'public, max-age=300, s-maxage=300');
+    response.set('Cache-Control', `public, max-age=${cacheTimeSeconds}, s-maxage=${cacheTimeSeconds}`);
     return response.status(200).contentType(contentType).send(feedOutput);
 
   } catch (err) {
@@ -221,7 +222,7 @@ async function handleUrlRequest(request, response, outputFormat, functionDefined
 
 exports.previewFunctionV2 = onRequest(
   { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.08 },
-  (request, response) => handleSheetRequest(request, response, 'rss', 10, 250, true)
+  (request, response) => handleSheetRequest(request, response, 'rss', 10, 250, true, 43200)
 );
 
 exports.sheetToRSS = onRequest(
