@@ -45,6 +45,16 @@ async function handleSheetRequest(
   const isLlmCompact = llmCompactParam === 'true' || llmCompactParam === '1';
   const baseUrl = "https://crssnt.com"
 
+  // New: Parse timestamp parameter
+  const sinceTimestampParam = request.query.timestamp;
+  let sinceTimestamp = null;
+  if (sinceTimestampParam) {
+      const parsedDate = feedUtils.parseDateString(String(sinceTimestampParam));
+      if (parsedDate) {
+          sinceTimestamp = parsedDate;
+      }
+  }
+
   // Determine effective itemLimit
   let effectiveItemLimit = functionDefinedItemLimit;
   const queryMaxItems = request.query.max_items;
@@ -81,7 +91,7 @@ async function handleSheetRequest(
     const pathAndQuery = request.originalUrl || request.url;
     const requestUrl = `${baseUrl}${pathAndQuery}`;
 
-    const feedData = feedUtils.buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl, effectiveItemLimit, effectiveCharLimit, isPreviewContext);
+    const feedData = feedUtils.buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl, effectiveItemLimit, effectiveCharLimit, isPreviewContext, sinceTimestamp);
 
     let feedOutput = '';
     let contentType = '';
@@ -137,6 +147,16 @@ async function handleUrlRequest(request, response, outputFormat, functionDefined
   const llmCompactParam = request.query.llm_compact;
   const isLlmCompact = llmCompactParam === 'true' || llmCompactParam === '1';
 
+  // New: Parse timestamp parameter
+  const sinceTimestampParam = request.query.timestamp;
+  let sinceTimestamp = null;
+  if (sinceTimestampParam) {
+      const parsedDate = feedUtils.parseDateString(String(sinceTimestampParam));
+      if (parsedDate) {
+          sinceTimestamp = parsedDate;
+      }
+  }
+
   // Determine effective itemLimit
   let effectiveItemLimit = functionDefinedItemLimit;
   const queryMaxItems = request.query.max_items;
@@ -179,7 +199,7 @@ async function handleUrlRequest(request, response, outputFormat, functionDefined
   const requestUrl = `${baseUrl}${pathAndQuery}`;
 
   try {
-      const feedData = await feedUtils.processMultipleUrls(sourceUrls, requestUrl, effectiveItemLimit, effectiveCharLimit, groupByFeed);
+      const feedData = await feedUtils.processMultipleUrls(sourceUrls, requestUrl, effectiveItemLimit, effectiveCharLimit, groupByFeed, sinceTimestamp);
 
       let feedOutput = '';
       let contentType = '';

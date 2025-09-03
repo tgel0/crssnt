@@ -6,7 +6,8 @@ const {
     generateJsonFeedObject, 
     generateMarkdown,
     parseXmlFeedWithCheerio, 
-    normalizeParsedFeed,
+    normalizeParsedFeed, 
+    parseDateString,
     processMultipleUrls,
     escapeXmlMinimal // Added for testing generateRssFeed notices
 } = require('./helper');
@@ -162,6 +163,29 @@ describe('buildFeedData (Helper Function - Sheet Processing)', () => {
             // buildFeedData defaults isPreview to false
             const feedData = buildFeedData(mockSingleSheetAutoData, 'auto', mockSheetTitle, mockSheetID, mockRequestUrl, 2, 500);
             expect(feedData.metadata.isPreview).toBe(false);
+        });
+    });
+
+    describe('Filtering with sinceTimestamp', () => {
+        const mode = 'auto';
+        // mockMultiSheetAutoData has items from Apr 3, Apr 2, Apr 1, Mar 30, and two with no date.
+        // Let's filter for items after Apr 1, 2025, 9am.
+        const since = parseDateString('2025-04-01T09:00:00Z');
+        const feedData = buildFeedData(mockMultiSheetAutoData, mode, mockSheetTitle, mockSheetID, mockRequestUrl, 50, 500, false, since);
+        const items = feedData.items;
+
+        it('should only return items published after the sinceTimestamp', () => {
+            // Expected items:
+            // Title 4 Latest (S2) - 2025-04-03T10:00:00Z
+            // Title 1 (S1) - 2025-04-02T09:00:00Z
+            expect(items).toHaveLength(2);
+            expect(items[0].title).toBe('Title 4 Latest (S2)');
+            expect(items[1].title).toBe('Title 1 (S1)');
+        });
+
+        it('should update lastBuildDate to the latest item in the filtered list', () => {
+            const expectedLatestDate = parseISO('2025-04-03T10:00:00Z');
+            expect(feedData.metadata.lastBuildDate.getTime()).toBe(expectedLatestDate.getTime());
         });
     });
 });
@@ -374,6 +398,27 @@ describe('processMultipleUrls (Helper Function - URL Aggregation & itemLimit per
         // Alpha's latest item is Apr 6, Beta's is Apr 7. So overall is Apr 7.
         const expectedLastBuildDate = parseISO('2025-04-07T12:00:00Z'); 
         expect(feedData.metadata.lastBuildDate.getTime()).toBe(expectedLastBuildDate.getTime());
+    });
+
+    it('should filter items globally based on sinceTimestamp', async () => {
+        global.fetch = jest.fn((url) => {
+            if (url === 'https://alpha.example.com/rss.xml') return Promise.resolve({ ok: true, text: async () => mockRssXmlFeed1 }); // Apr 6, Apr 5, Apr 3
+            if (url === 'https://beta.example.com/atom.xml') return Promise.resolve({ ok: true, text: async () => mockAtomXmlFeed2 });   // Apr 7, Apr 4
+            return Promise.resolve({ ok: false, status: 404 });
+        });
+
+        const sourceUrls = ['https://alpha.example.com/rss.xml', 'https://beta.example.com/atom.xml'];
+        const since = parseDateString('2025-04-05T12:00:00Z'); // After Alpha Item 2
+        // itemLimit is high to not interfere
+        const feedData = await processMultipleUrls(sourceUrls, mockRequestUrl, 50, 500, false, since); 
+        
+        // Expected items: Beta Item 1 (Apr 7), Alpha Item 3 (Apr 6)
+        expect(feedData.items).toHaveLength(2);
+        expect(feedData.items[0].title).toBe('Beta Item 1 (Newest)');
+        expect(feedData.items[1].title).toBe('Alpha Item 3 (Newest)');
+        
+        // lastBuildDate should be the newest of the filtered items
+        expect(feedData.metadata.lastBuildDate.toISOString()).toBe(parseISO('2025-04-07T12:00:00Z').toISOString());
     });
 });
 

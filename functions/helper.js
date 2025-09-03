@@ -218,7 +218,7 @@ function generateFeedManualModeInternal(values) {
     return items;
 }
 
-function buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl, itemLimit = 50, charLimit = 500, isPreview = false) {
+function buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl, itemLimit = 50, charLimit = 500, isPreview = false, sinceTimestamp = null) {
     let allItems = [];
     let anySheetWasItemLimited = false;
     let anySheetWasCharLimited = false;
@@ -248,6 +248,13 @@ function buildFeedData(sheetData, mode, sheetTitle, sheetID, requestUrl, itemLim
 
     // Sort the globally combined list of (already per-sheet-limited) items
     sortFeedItems(allItems); 
+
+    // Filter by sinceTimestamp
+    if (sinceTimestamp instanceof Date && isValid(sinceTimestamp)) {
+        allItems = allItems.filter(item => {
+            return item.dateObject && isValid(item.dateObject) && item.dateObject.getTime() > sinceTimestamp.getTime();
+        });
+    }
 
     // Determine the latest date for the feed's lastBuildDate from the final combined & sorted list
     const latestItemDate = allItems.length > 0 && allItems[0].dateObject instanceof Date && isValid(allItems[0].dateObject)
@@ -409,7 +416,7 @@ function normalizeParsedFeed($, sourceUrl, itemLimit = Infinity, charLimit = Inf
     };
 }
 
-async function processMultipleUrls(sourceUrls, requestUrl, itemLimit = 50, charLimit = 500, groupByFeed = false) {
+async function processMultipleUrls(sourceUrls, requestUrl, itemLimit = 50, charLimit = 500, groupByFeed = false, sinceTimestamp = null) {
     let allItems = [];
     const allFeedMetadata = []; 
     let anyIndividualFeedWasItemLimited = false; 
@@ -447,7 +454,14 @@ async function processMultipleUrls(sourceUrls, requestUrl, itemLimit = 50, charL
         sortFeedItems(allItems); 
     }
     
-    const finalLimitedItems = allItems; 
+    let finalLimitedItems = allItems; 
+    
+    // Filter by sinceTimestamp
+    if (sinceTimestamp instanceof Date && isValid(sinceTimestamp)) {
+        finalLimitedItems = finalLimitedItems.filter(item => {
+            return item.dateObject && isValid(item.dateObject) && item.dateObject.getTime() > sinceTimestamp.getTime();
+        });
+    }
     
     const firstValidMetadata = allFeedMetadata.length > 0 ? allFeedMetadata[0] : {};
     const combinedTitle = allFeedMetadata.length > 1 
@@ -841,6 +855,6 @@ function generateBlockedFeedPlaceholder(sheetID, outputFormat, feedBaseUrl) {
 module.exports = {
     getSheetData, buildFeedData, fetchUrlContent, parseXmlFeedWithCheerio,
     normalizeParsedFeed, processMultipleUrls, generateRssFeed, generateAtomFeed,
-    generateJsonFeedObject, generateMarkdown, generateBlockedFeedPlaceholder,
+    generateJsonFeedObject, generateMarkdown, generateBlockedFeedPlaceholder, parseDateString,
     escapeMarkdown, escapeXmlMinimal
 };
