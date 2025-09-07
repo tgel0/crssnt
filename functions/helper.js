@@ -28,6 +28,14 @@ function escapeMarkdown(unsafe) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
 }
+
+function getCleanTextFromHtml(htmlContent) {
+    if (!htmlContent) return '';
+    // Use cheerio to get text, then normalize whitespace by replacing
+    // multiple whitespace characters (including newlines) with a single space.
+    const textContent = cheerio.load(String(htmlContent)).text();
+    return textContent.replace(/\s+/g, ' ').trim();
+}
   
 // --- Date Handling ---
 function parseDateString(dateString) {
@@ -334,7 +342,7 @@ function normalizeParsedFeed($, sourceUrl, itemLimit = Infinity, charLimit = Inf
             const $item = $(el);
             const title = $item.find('> title').text().trim() || '(Untitled)';
             const link = $item.find('> link').text().trim() || $item.find('guid[isPermaLink="true"]').text().trim() || undefined;
-            const rawDescription = $item.find('> description').html() || $item.find('content\\:encoded').html() || ''; 
+            const rawDescription = $item.find('content\\:encoded').html() || $item.find('> description').html() || ''; 
             const descriptionContent = _stripCdataWrapper(rawDescription);
             const pubDateStr = $item.find('> pubDate').text().trim();
             const dateObject = parseDateString(pubDateStr);
@@ -665,11 +673,14 @@ function generateJsonFeedObject(feedData, groupByFeedInternal = false, multipleS
             itemId = `${metadata.id || 'urn:uuid:temp'}:${crypto.createHash('sha1').update(stringToHash).digest('hex')}`;
         }
         
+        const description = String(item.descriptionContent || '');
+        const contentText = isLlmCompact ? getCleanTextFromHtml(description) : description;
+
         const jsonItem = {
             id: isLlmCompact ? undefined : itemId, 
             url: item.link, 
             title: item.title,
-            content_text: String(item.descriptionContent || ''), 
+            content_text: contentText,
             date_published: itemDate ? formatISO(itemDate) : undefined, 
         };
         
@@ -736,7 +747,7 @@ function generateMarkdown(feedData, groupByFeedInternal = false, multipleSources
                const groupItemStrings = [];
                group.items.forEach(item => {
                    let itemStr = `## ${item.title || '(Untitled)'}`;
-                   const cleanDescription = String(item.descriptionContent || '').replace(/\n+/g, ' ').trim();
+                   const cleanDescription = getCleanTextFromHtml(item.descriptionContent);
                    if (cleanDescription) {
                        itemStr += ` ${cleanDescription}`;
                    }
@@ -750,7 +761,7 @@ function generateMarkdown(feedData, groupByFeedInternal = false, multipleSources
        } else { 
            items.forEach(item => {
                let itemStr = `# ${item.title || '(Untitled)'}`;
-               const cleanDescription = String(item.descriptionContent || '').replace(/\n+/g, ' ').trim();
+               const cleanDescription = getCleanTextFromHtml(item.descriptionContent);
                if (cleanDescription) {
                    itemStr += ` ${cleanDescription}`;
                }
@@ -761,9 +772,6 @@ function generateMarkdown(feedData, groupByFeedInternal = false, multipleSources
        }
        md = itemStrings.join(" ||| "); 
 
-       if (metadata.itemCountLimited || metadata.itemCharLimited) { 
-           md += " [TRUNCATED]";
-       }
        return md.trim();
    }
 

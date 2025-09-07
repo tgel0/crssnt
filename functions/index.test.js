@@ -335,6 +335,17 @@ const mockRssXmlFeed3NoDates = `<?xml version="1.0" encoding="UTF-8"?>
     <item><title>Gamma Item 2</title><link>https://gamma.example.com/g2</link><description>Gamma desc 2</description></item>
 </channel></rss>`;
 
+const mockRssWithContentEncoded = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+<channel>
+    <title>Content Encoded Feed</title>
+    <item>
+        <title>Test Item</title>
+        <description>This is the short summary.</description>
+        <content:encoded><![CDATA[<p>This is the <b>full</b> content.</p>]]></content:encoded>
+    </item>
+</channel>
+</rss>`;
 
 describe('normalizeParsedFeed with itemLimit', () => {
     it('should limit items from a single RSS feed', () => {
@@ -510,7 +521,7 @@ describe('generateMarkdown with LLM Compact Mode', () => {
         // Since Alpha feed (3 items) is limited to 2, itemCountLimited is true for the combined feed.
         const expected =
             `# RSS Feed Alpha ## Alpha Item 3 (Newest) Link: https://alpha.example.com/item3 Date: ${formatISO(parseISO('2025-04-06T10:00:00Z'))} --- ## Alpha Item 2 (Newer) Link: https://alpha.example.com/item2 Date: ${formatISO(parseISO('2025-04-05T10:00:00Z'))}` +
-            ` ||| # Atom Feed Beta ## Beta Item 1 (Newest) Link: https://beta.example.com/entry1 Date: ${formatISO(parseISO('2025-04-07T12:00:00Z'))} --- ## Beta Item 2 (Older) Link: https://beta.example.com/entry2 Date: ${formatISO(parseISO('2025-04-04T15:00:00Z'))}` + ` [TRUNCATED]`;
+            ` ||| # Atom Feed Beta ## Beta Item 1 (Newest) Link: https://beta.example.com/entry1 Date: ${formatISO(parseISO('2025-04-07T12:00:00Z'))} --- ## Beta Item 2 (Older) Link: https://beta.example.com/entry2 Date: ${formatISO(parseISO('2025-04-04T15:00:00Z'))}`;
         expect(mdResult).toBe(expected);
     });
 
@@ -520,13 +531,86 @@ describe('generateMarkdown with LLM Compact Mode', () => {
         expect(mdResult).toBe(expected);
     });
 
-    it('should include [TRUNCATED] notice if items were limited (grouped)', () => {
+    it('should NOT include [TRUNCATED] notice in compact mode, even if items were limited', () => {
         // feedDataLimitedAndGrouped has itemLimit=1 per source. Both sources had more items.
         const mdResult = generateMarkdown(feedDataLimitedAndGrouped, true, true, true);
         const expected = 
             `# RSS Feed Alpha ## Alpha Item 3 (Newest) Link: https://alpha.example.com/item3 Date: ${formatISO(parseISO('2025-04-06T10:00:00Z'))}` + // Alpha Item 2 has no desc in mockRssXmlFeed1
-            ` ||| # Atom Feed Beta ## Beta Item 1 (Newest) Link: https://beta.example.com/entry1 Date: ${formatISO(parseISO('2025-04-07T12:00:00Z'))}` + // Beta Item 1 has no desc in mockAtomXmlFeed2
-            ` [TRUNCATED]`;
+            ` ||| # Atom Feed Beta ## Beta Item 1 (Newest) Link: https://beta.example.com/entry1 Date: ${formatISO(parseISO('2025-04-07T12:00:00Z'))}`; // Beta Item 1 has no desc in mockAtomXmlFeed2
         expect(mdResult).toBe(expected);
+    });
+});
+
+describe('LLM Compact HTML Stripping', () => {
+    let feedData;
+    const sourceUrl = 'https://html.example.com/rss.xml';
+    const mockRssWithHtmlDesc = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+    <title>HTML Desc Feed</title>
+    <item>
+        <title>HTML Item</title>
+        <link>https://html.example.com/item1</link>
+        <description><![CDATA[<p>This is a <b>bold</b> description.</p> It has line breaks.<br/>And an <a href="http://example.com">anchor</a>.]]></description>
+    </item>
+</channel></rss>`;
+
+    beforeAll(async () => {
+        global.fetch = jest.fn((url) => {
+            if (url === sourceUrl) return Promise.resolve({ ok: true, text: async () => mockRssWithHtmlDesc });
+            return Promise.resolve({ ok: false, status: 404 });
+        });
+        feedData = await processMultipleUrls([sourceUrl], 'https://crssnt.com/html_test', 50, 500, false);
+    });
+    afterAll(() => {
+        jest.restoreAllMocks();
+    });
+
+    it('generateMarkdown should strip HTML for llm_compact=true', () => {
+        const mdResult = generateMarkdown(feedData, false, false, true);
+        const expectedText = "# HTML Item This is a bold description. It has line breaks.And an anchor. Link: https://html.example.com/item1";
+        expect(mdResult).toBe(expectedText);
+    });
+
+    it('generateJsonFeedObject should strip HTML for llm_compact=true', () => {
+        const jsonResult = generateJsonFeedObject(feedData, false, false, true);
+        const expectedDescription = "This is a bold description. It has line breaks.And an anchor.";
+        expect(jsonResult.items[0].content_text).toBe(expectedDescription);
+    });
+
+    it('generateMarkdown should NOT strip HTML for llm_compact=false', () => {
+        const mdResult = generateMarkdown(feedData, false, false, false);
+        const originalDescription = `<p>This is a <b>bold</b> description.</p> It has line breaks.<br/>And an <a href="http://example.com">anchor</a>.`;
+        expect(mdResult).toContain(originalDescription);
+    });
+
+    it('generateJsonFeedObject should NOT strip HTML for llm_compact=false', () => {
+        const jsonResult = generateJsonFeedObject(feedData, false, false, false);
+        const originalDescription = `<p>This is a <b>bold</b> description.</p> It has line breaks.<br/>And an <a href="http://example.com">anchor</a>.`;
+        expect(jsonResult.items[0].content_text).toBe(originalDescription);
+    });
+});
+
+describe('Content Prioritization and Cleaning', () => {
+    it('should prioritize content:encoded over description for RSS feeds', () => {
+        const $ = parseXmlFeedWithCheerio(mockRssWithContentEncoded);
+        const feedData = normalizeParsedFeed($, 'https://content.example.com/rss', Infinity, Infinity);
+        expect(feedData.items[0].descriptionContent).toBe('<p>This is the <b>full</b> content.</p>');
+    });
+
+    it('should clean and normalize whitespace from HTML in llm_compact mode', () => {
+        const html = ` <p>  Hello   \n\n world. </p> <div>Another  line.</div> `;
+        const expected = "Hello world. Another line.";
+        const feedData = {
+            metadata: { groupByFeed: false },
+            items: [{ title: 'Test', descriptionContent: html }]
+        };
+        // Test Markdown output
+        const mdResult = generateMarkdown(feedData, false, false, true);
+        expect(mdResult).toContain(expected);
+        expect(mdResult).not.toContain('  '); // Should not contain double spaces
+
+        // Test JSON output
+        const jsonResult = generateJsonFeedObject(feedData, false, false, true);
+        expect(jsonResult.items[0].content_text).toBe(expected);
     });
 });
