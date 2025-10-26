@@ -15,12 +15,27 @@ const BLOCKED_SHEET_IDS = new Set(BLOCKED_SHEET_IDS_STRING.split(',').map(id => 
 
 initializeApp();
 
+/**
+ * Handles requests for converting Google Sheet data into a feed (RSS, Atom, JSON, Markdown).
+ * It fetches data from a specified Google Sheet, processes it, and formats it into the desired feed type.
+ *
+ * @param {import('firebase-functions/v2/https').Request} request The Firebase Functions request object.
+ *   Expects sheet ID in query `id` or as a path segment. Optional query params: `name` (sheet name),
+ *   `use_manual_mode`, `llm_compact`, `timestamp`, `max_items`.
+ * @param {import('firebase-functions/v2/https').Response} response The Firebase Functions response object.
+ * @param {string} [outputFormat='rss'] The desired output format ('rss', 'atom', 'json', 'markdown').
+ * @param {number} [functionDefinedItemLimit=50] The default maximum number of items to include in the feed.
+ * @param {number} [functionDefinedCharLimit=500] The default character limit for item descriptions.
+ * @param {boolean} [isPreviewContext=false] If true, applies settings suitable for a preview (e.g., shorter cache).
+ * @param {number} [cacheTimeSeconds=300] The public cache time in seconds for the response.
+ * @returns {Promise<void>} A promise that resolves when the response has been sent.
+ */
 async function handleSheetRequest(
-  request, 
-  response, 
-  outputFormat = 'rss', 
-  functionDefinedItemLimit = 50, 
-  functionDefinedCharLimit = 500, 
+  request,
+  response,
+  outputFormat = 'rss',
+  functionDefinedItemLimit = 50,
+  functionDefinedCharLimit = 500,
   isPreviewContext = false,
   cacheTimeSeconds = 300
 ) {
@@ -140,7 +155,28 @@ async function handleSheetRequest(
 }
 
 
-async function handleUrlRequest(request, response, outputFormat, functionDefinedItemLimit = 10, functionDefinedCharLimit = 500, functionDefinedUrlLimit = 10) {
+/**
+ * Handles requests for converting one or more external feed URLs into a single combined feed.
+ * It fetches items from the given URLs, merges them, and formats the result into the desired output format.
+ *
+ * @param {import('firebase-functions/v2/https').Request} request The Firebase Functions request object.
+ *   Expects feed URL(s) in the `url` query parameter. Optional query params: `group_by_feed`,
+ *   `llm_compact`, `timestamp`, `max_items`.
+ * @param {import('firebase-functions/v2/https').Response} response The Firebase Functions response object.
+ * @param {string} outputFormat The desired output format ('atom', 'json', 'markdown').
+ * @param {number} [functionDefinedItemLimit=10] The default maximum number of items to include per source feed.
+ * @param {number} [functionDefinedCharLimit=500] The default character limit for item descriptions.
+ * @param {number} [functionDefinedUrlLimit=10] The maximum number of source URLs allowed.
+ * @returns {Promise<void>} A promise that resolves when the response has been sent.
+ */
+async function handleUrlRequest(
+  request,
+  response,
+  outputFormat,
+  functionDefinedItemLimit = 10,
+  functionDefinedCharLimit = 500,
+  functionDefinedUrlLimit = 10
+) {
   let sourceUrls = request.query.url;
   const groupByFeedParam = request.query.group_by_feed;
   const groupByFeed = groupByFeedParam === 'true' || groupByFeedParam === '1';
@@ -267,15 +303,15 @@ exports.sheetToMarkdown = onRequest(
 
 exports.feedToAtom = onRequest(
   { cors: true, cpu: 1, concurrency: 15 },
-  (request, response) => handleUrlRequest(request, response, 'atom', 10, 500, 10)
+  (request, response) => handleUrlRequest(request, response, 'atom', 25, 500, 10)
 );
 
 exports.feedToJson = onRequest(
   { cors: true, cpu: 1, concurrency: 15 },
-  (request, response) => handleUrlRequest(request, response, 'json', 10, 500, 10)
+  (request, response) => handleUrlRequest(request, response, 'json', 25, 500, 10)
 );
 
 exports.feedToMarkdown = onRequest(
   { cors: true, cpu: 1, concurrency: 15 },
-  (request, response) => handleUrlRequest(request, response, 'markdown', 10, 500, 10)
+  (request, response) => handleUrlRequest(request, response, 'markdown', 25, 500, 10)
 );
