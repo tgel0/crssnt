@@ -17,12 +17,13 @@
   "overrides": {
     "@tootallnate/once": "^3.0.1",
     "http-proxy-agent": "^7.0.2",
-    "teeny-request": "^10.1.2"
+    "teeny-request": "^10.1.2",
+    "uuid": "^11.1.1"
   },
   "dependencies": {
     "cheerio": "^1.2.0",
     "date-fns": "^4.1.0",
-    "firebase-admin": "^13.8.0",
+    "firebase-admin": "^13.10.0",
     "firebase-functions": "^7.2.5",
     "googleapis": "^171.4.0"
   },
