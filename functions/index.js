@@ -90,6 +90,7 @@ async function handleSheetRequest(
   }
 
   if (!sheetID) {
+    response.set('Cache-Control', 'public, max-age=3600, s-maxage=3600');
     return response.status(400).send('Sheet ID not provided in query (?id=) or path.');
   }
 
@@ -126,7 +127,7 @@ async function handleSheetRequest(
         contentType = 'application/rss+xml; charset=utf8';
     }
 
-    response.set('Cache-Control', `public, max-age=${cacheTimeSeconds}, s-maxage=${cacheTimeSeconds}`);
+    response.set('Cache-Control', `public, max-age=${cacheTimeSeconds}, s-maxage=${cacheTimeSeconds}, stale-while-revalidate=60, stale-if-error=3600`);
     return response.status(200).contentType(contentType).send(feedOutput);
 
   } catch (err) {
@@ -134,10 +135,12 @@ async function handleSheetRequest(
     console.error(`Error processing sheet ${sheetID} for ${outputFormat}:`, err);
     let statusCode = 500;
     let message = 'Something went wrong processing the spreadsheet.';
+    let errorCacheSeconds = 0;
 
     if (err.code === 404 || (err.message && err.message.includes('Requested entity was not found'))) {
       statusCode = 404;
       message = 'Spreadsheet not found. Check the Sheet ID.';
+      errorCacheSeconds = 21600; // 6 hours negative cache for non-existent sheets
     } 
     
     else if (err.code === 403) {
@@ -146,10 +149,20 @@ async function handleSheetRequest(
        if (err.message && err.message.includes('API key not valid')) {
           message = 'Permission denied. The API key is not valid or not authorized for this sheet.';
        }
+       errorCacheSeconds = 900; // 15 minutes negative cache for permission errors
     } else if (err.message && err.message.includes('Unable to parse range')) {
        statusCode = 400;
-       message = `Sheet named "${sheetName || 'default'}" not found or invalid range.`;
-      }
+       const requestedName = Array.isArray(sheetNames) ? sheetNames.join(', ') : (sheetNames || 'default');
+       message = `Sheet named "${requestedName}" not found or invalid range.`;
+       errorCacheSeconds = 3600; // 1 hour negative cache for invalid sheet names
+    }
+
+    if (errorCacheSeconds > 0) {
+      response.set('Cache-Control', `public, max-age=${errorCacheSeconds}, s-maxage=${errorCacheSeconds}`);
+    } else {
+      response.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+
     return response.status(statusCode).send(message);
   }
 }
@@ -206,6 +219,7 @@ async function handleUrlRequest(
   const effectiveCharLimit = functionDefinedCharLimit;
 
   if (!sourceUrls || (Array.isArray(sourceUrls) && sourceUrls.filter(u => String(u || '').trim()).length === 0)) {
+      response.set('Cache-Control', 'public, max-age=3600, s-maxage=3600');
       return response.status(400).send('Source URL(s) not provided. Use query parameter "?url=FEED_URL". You can provide multiple "url" parameters.');
   }
 
@@ -215,10 +229,12 @@ async function handleUrlRequest(
   sourceUrls = sourceUrls.map(u => String(u || '').trim()).filter(u => u);
 
   if (sourceUrls.length === 0) {
+    response.set('Cache-Control', 'public, max-age=3600, s-maxage=3600');
     return response.status(400).send('No valid source URLs provided after trimming.');
   }
 
   if (sourceUrls.length > functionDefinedUrlLimit) {
+    response.set('Cache-Control', 'public, max-age=3600, s-maxage=3600');
     return response.status(400).send(`Too many source URLs provided. The maximum allowed is ${functionDefinedUrlLimit}. You provided ${sourceUrls.length}.`);
   }
 
@@ -226,6 +242,7 @@ async function handleUrlRequest(
       try {
           new URL(url);
       } catch (e) {
+          response.set('Cache-Control', 'public, max-age=3600, s-maxage=3600');
           return response.status(400).send(`Invalid source URL format: ${url}`);
       }
   }
@@ -257,20 +274,31 @@ async function handleUrlRequest(
         contentType = 'application/feed+json; charset=utf8';
     }
 
-      response.set('Cache-Control', 'public, max-age=300, s-maxage=300');
+      response.set('Cache-Control', 'public, max-age=300, s-maxage=300, stale-while-revalidate=60, stale-if-error=3600');
       return response.status(200).contentType(contentType).send(feedOutput);
 
   } catch (err) {
-      console.error(`Error processing URL ${sourceUrl} for ${outputFormat}:`, err);
+      console.error(`Error processing URLs [${sourceUrls.join(', ')}] for ${outputFormat}:`, err);
       let statusCode = 500;
       let message = 'Something went wrong processing the external feed.';
-      if (err.message.includes('Failed to fetch') || err.message.includes('invalid URL')) {
+      let errorCacheSeconds = 0;
+
+      if (err.message && (err.message.includes('Failed to fetch') || err.message.includes('invalid URL'))) {
           statusCode = 400;
-          message = `Could not fetch or invalid source URL: ${sourceUrl}. Details: ${err.message}`;
-      } else if (err.message.includes('Unknown feed type')) {
+          message = `Could not fetch or invalid source URL(s): ${sourceUrls.join(', ')}. Details: ${err.message}`;
+          errorCacheSeconds = 300;
+      } else if (err.message && err.message.includes('Unknown feed type')) {
           statusCode = 400;
-          message = `Could not determine feed type (RSS or Atom) for URL: ${sourceUrl}.`;
+          message = `Could not determine feed type (RSS or Atom) for URL(s): ${sourceUrls.join(', ')}.`;
+          errorCacheSeconds = 1800;
       }
+
+      if (errorCacheSeconds > 0) {
+        response.set('Cache-Control', `public, max-age=${errorCacheSeconds}, s-maxage=${errorCacheSeconds}`);
+      } else {
+        response.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+      }
+
       return response.status(statusCode).send(message);
   }
 }
