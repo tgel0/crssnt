@@ -310,7 +310,7 @@ exports.previewFunctionV2 = onRequest(
 );
 
 exports.sheetToRSS = onRequest(
-  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 0.08 },
+  { cors: true, secrets: ["SHEETS_API_KEY", "BLOCKED_SHEET_IDS"], cpu: 1, concurrency: 15 },
   (request, response) => handleSheetRequest(request, response, 'rss', 50, 500)
 );
 
